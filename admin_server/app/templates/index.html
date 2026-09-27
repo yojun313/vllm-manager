@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="shell">
+  <header class="top">
+    <div class="mark">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#08090d" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7l8-4 8 4-8 4-8-4z"/><path d="M4 12l8 4 8-4"/><path d="M4 17l8 4 8-4"/></svg>
+    </div>
+    <div class="brand"><h1>vLLM Control</h1><div class="sub mono" id="image">연결 중…</div></div>
+    <div class="sp"></div>
+    <div class="live" title="실시간 연결 상태"><span class="dot" id="liveDot"></span><span class="txt" id="liveTxt">연결 중</span></div>
+    <button class="btn ghost icon" id="logoutBtn" title="로그아웃" aria-label="로그아웃">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+    </button>
+  </header>
+
+  <div id="banner"></div>
+
+  <section class="first">
+    <div class="sh"><h2>GPU</h2><span class="count">실시간 · 1초</span></div>
+    <div class="grid gpus" id="gpus"><div class="skeleton"></div><div class="skeleton"></div></div>
+  </section>
+
+  <section>
+    <div class="sh"><h2>실행 중</h2><span class="count" id="runCount"></span></div>
+    <div class="grid run" id="running"><div class="skeleton"></div></div>
+  </section>
+
+  <section>
+    <div class="sh"><h2>모델</h2><span class="count" id="libCount"></span></div>
+    <div class="grid lib" id="library"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
+  </section>
+
+  <section>
+    <div class="sh"><h2>새 모델 다운로드</h2></div>
+    <div class="card">
+      <form class="pull" id="pullForm">
+        <input class="input mono" id="repo" placeholder="Qwen/Qwen3-8B  또는  huggingface.co 주소" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <input class="input mono" id="alias" placeholder="별칭 (선택)" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <button class="btn primary" type="submit">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>다운로드</button>
+      </form>
+      <div class="hint"><code>/mnt/disk/vllm/&lt;org&gt;__&lt;name&gt;</code> 에 받고 설정 파일을 자동으로 만들어 위 목록에 추가합니다. 끊겨도 다시 누르면 이어받습니다.</div>
+      <div class="downloads" id="downloads"></div>
+    </div>
+  </section>
+
+  <section id="connSec" hidden>
+    <div class="sh"><h2>연결 정보</h2></div>
+    <div class="card conn">
+      <div class="mono dim">API 키 인증 켜짐 · <span class="nowrap">Authorization: Bearer &lt;키&gt;</span></div>
+      <button class="btn sm" id="copyKeyBtn">API 키 복사</button>
+    </div>
+  </section>
+</div>
+
+<button class="fab" id="fab"><span class="dot" id="fabDot"></span>작업 <span class="n" id="fabN">0</span></button>
+<div class="scrim" id="scrim"></div>
+<aside class="sheet" id="sheet" aria-hidden="true">
+  <div class="sheet-h">
+    <button class="btn ghost sm" id="sheetBack" hidden>← 목록</button>
+    <h3 id="sheetTitle">작업</h3>
+    <button class="btn ghost sm" id="followBtn" hidden title="새 로그 따라가기">↓ 따라가기</button>
+    <button class="btn ghost sm" id="sheetClose">닫기</button>
+  </div>
+  <div class="sheet-progress" id="sheetProgress" hidden></div>
+  <div class="sheet-b" id="sheetBody"></div>
+</aside>
+<div class="toasts" id="toasts"></div>
+
+<div class="modal-wrap" id="confirmModal" hidden>
+  <div class="modal" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle">
+    <h3 id="confirmTitle"></h3>
+    <div class="modal-body" id="confirmBody"></div>
+    <div class="modal-actions"><button class="btn ghost" id="confirmCancel">취소</button><button class="btn danger armed" id="confirmOk"></button></div>
+  </div>
+</div>
+
+<div class="modal-wrap" id="delModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="delTitle">
+    <h3 id="delTitle">모델 삭제</h3>
+    <div class="modal-body">
+      <div class="del-model"><span class="swatch" id="delSwatch"></span><div><b id="delAlias"></b><div class="mono dim" id="delServed"></div></div></div>
+      <p class="del-warn" id="delRunning" hidden></p>
+      <label class="check" id="delFilesRow"><input type="checkbox" id="delFiles">
+        <span><b>가중치 파일도 삭제</b> <span class="mono" id="delSize"></span><br><span class="mono dim small" id="delPath"></span></span></label>
+      <p class="dim small" id="delFilesNote"></p>
+      <label class="field"><span>확인을 위해 모델 이름 <b class="mono" id="delAlias2"></b> 을 입력하세요</span>
+        <input class="input mono" id="delConfirm" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+    </div>
+    <div class="modal-actions"><button class="btn ghost" id="delCancel">취소</button><button class="btn danger armed" id="delOk" disabled>삭제</button></div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/js/app.js"></script>{% endblock %}

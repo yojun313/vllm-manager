@@ -1,0 +1,16 @@
+# 비밀값 (./vllm key new, admin_server/.env.example 참고)
+api-key.env
+.env
+
+# 모델별 설정은 서버마다 다르므로 올리지 않는다 (./vllm pull / ./vllm new 로 생성)
+models/*
+!models/.gitkeep
+
+# 자동 생성물
+.venv/
+__pycache__/
+*.pyc
+admin_server/data/
+
+# 이 프로젝트와 무관한 개인 스크립트
+update_openwebui.sh

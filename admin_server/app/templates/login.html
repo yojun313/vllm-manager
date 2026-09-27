@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}로그인 · vLLM Control{% endblock %}
+{% block body_class %}login{% endblock %}
+{% block body %}
+<main class="login-wrap">
+  <div class="login-card">
+    <div class="mark lg">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#08090d" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7l8-4 8 4-8 4-8-4z"/><path d="M4 12l8 4 8-4"/><path d="M4 17l8 4 8-4"/></svg>
+    </div>
+    <h1>vLLM Control</h1>
+    <p>GPU 서버의 모델을 켜고 끄는 관리 화면입니다.</p>
+    <form id="loginForm" autocomplete="on">
+      <label class="field"><span>아이디</span>
+        <input class="input" id="username" name="username" autocomplete="username" autocapitalize="off" spellcheck="false" required autofocus></label>
+      <label class="field"><span>비밀번호</span>
+        <input class="input" id="password" name="password" type="password" autocomplete="current-password" required></label>
+      <button class="btn primary block" type="submit" id="loginBtn">로그인</button>
+      <div class="form-err" id="loginErr" role="alert"></div>
+    </form>
+  </div>
+</main>
+{% endblock %}
+{% block scripts %}<script src="/js/login.js"></script>{% endblock %}

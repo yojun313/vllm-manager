@@ -1,0 +1,550 @@
+#!/usr/bin/env bash
+# vllm: models/*.yaml 설정으로 vLLM OpenAI 호환 서버를 도커로 띄우는 스크립트.
+# 사용법은 `./vllm help` 참고.
+set -euo pipefail
+shopt -s nullglob   # models/ 가 비어 있어도 *.yaml 이 글자 그대로 남지 않도록
+
+ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+CONFIG_DIR="$ROOT/models"
+LABEL=vllm-serve.gpus
+
+set -a
+# shellcheck source=vllm.env
+source "$ROOT/vllm.env"
+set +a
+
+DRY_RUN=0
+
+# ---------------------------------------------------------------- helpers
+die()  { echo "❌ $*" >&2; exit 1; }
+info() { echo "▶ $*"; }
+
+docker_() {
+    if [[ -z "${_DOCKER:-}" ]]; then
+        if docker info >/dev/null 2>&1; then _DOCKER="docker"
+        elif [[ -n "${VLLM_NO_SUDO:-}" ]]; then die "docker 권한이 없습니다: sudo usermod -aG docker \$USER 후 재로그인하세요"
+        else _DOCKER="sudo docker"; fi
+    fi
+    $_DOCKER "$@"
+}
+
+run() {
+    if (( DRY_RUN )); then { printf '%q ' "$@"; echo; } >&2; else "$@"; fi
+}
+
+config_path() {
+    local name="${1%.yaml}"; name="${name%.yml}"
+    local f; f="$CONFIG_DIR/$(basename "$name").yaml"
+    [[ -f "$f" ]] || die "설정 파일이 없습니다: $f  (목록: ./vllm ls)"
+    echo "$f"
+}
+
+# "# gpus: N" 주석에서 권장 GPU 수를 읽는다 (없으면 1)
+config_gpus() { sed -n 's/^# *gpus: *\([0-9]\+\).*/\1/p' "$1" | head -1 | grep . || echo 1; }
+
+# served-model-name 의 첫 번째 이름 (없으면 model 값)
+config_served_name() {
+    local v
+    v=$(sed -n 's/^served-model-name: *//p' "$1" | head -1)
+    [[ -z "$v" ]] && v=$(sed -n 's/^model: *//p' "$1" | head -1)
+    v="${v#[}"; v="${v%%,*}"; v="${v%]}"
+    echo "$v" | tr -d ' "'"'"
+}
+
+# 실행 중인 vllm 컨테이너: "이름<TAB>GPU<TAB>모델<TAB>포트<TAB>예약MiB<TAB>상태<TAB>ID"
+list_containers() {
+    docker_ ps -a --filter "label=$LABEL" \
+        --format "{{.Names}}\t{{.Label \"$LABEL\"}}\t{{.Label \"vllm-serve.model\"}}\t{{.Label \"vllm-serve.port\"}}\t{{.Label \"vllm-serve.mem\"}}\t{{.Status}}\t{{.ID}}" \
+        | awk -F'\t' -v OFS='\t' '{ for (i = 1; i <= NF; i++) if ($i == "") $i = "-"; print }'  # read 가 빈 칸을 건너뛰지 않도록
+}
+
+# models/x.yaml 을 GPU tp 장으로 띄울 때의 메모리 계획 → PLAN_NEED_MIB, PLAN_ARGS, PLAN_DESC
+plan() {
+    local total; total=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -1)
+    eval "$(python3 "$ROOT/lib/plan.py" "$1" "$MODELS_DIR" "$HF_CACHE_DIR" "$2" "$total")"
+}
+
+# GPU 한 장의 새 모델용 여유 MiB (계산은 lib/gpufree.py). $2: 교체될 컨테이너 이름(그 몫은 빼고 계산)
+gpu_free_mib() {
+    list_containers | python3 "$ROOT/lib/gpufree.py" "${2:--}" "$SAFETY_MIB" | awk -v g="$1" '$1 == g { print $2 }'
+}
+
+port_in_use() {
+    local port="$1" skip="${2:-}" cname _g _m cport _rest
+    while IFS=$'\t' read -r cname _g _m cport _rest; do
+        [[ -z "$cname" || "$cport" != "$port" ]] && continue
+        [[ "$cname" == "$skip" ]] && return 1   # 교체될 컨테이너가 쓰던 포트는 그대로 재사용
+        return 0
+    done < <(list_containers)
+    ss -ltnH "sport = :$port" 2>/dev/null | grep -q .   # 다른 프로그램이 쓰는 포트
+}
+
+gpus_overlap() {
+    local a b
+    for a in ${1//,/ }; do for b in ${2//,/ }; do [[ "$a" == "$b" ]] && return 0; done; done
+    return 1
+}
+
+# HF 토큰 파일을 컨테이너에 읽기 전용으로 마운트 (명령줄/inspect 에 토큰이 노출되지 않도록)
+TOKEN_ARGS=()
+if [[ -f "$HOME/.cache/huggingface/token" ]]; then
+    TOKEN_ARGS=(-v "$HOME/.cache/huggingface/token:/run/hf_token:ro" -e HF_TOKEN_PATH=/run/hf_token)
+fi
+
+# API 키: api-key.env 가 있으면 인증을 켠다 (./vllm key 로 생성)
+# --env-file 은 docker CLI 가 읽으므로 키가 명령줄(ps)에 노출되지 않는다
+API_KEY_FILE="$ROOT/api-key.env"
+AUTH_ARGS=()
+[[ -f "$API_KEY_FILE" ]] && AUTH_ARGS=(--env-file "$API_KEY_FILE")
+
+api_key() { [[ -f "$API_KEY_FILE" ]] && sed -n 's/^VLLM_API_KEY=//p' "$API_KEY_FILE"; return 0; }
+
+# 이미지가 없으면 진행률을 보여주며 먼저 받는다 (첫 실행 시 수 GB, 몇 분 걸림)
+ensure_image() {
+    (( DRY_RUN )) && return 0
+    docker_ image inspect "$VLLM_IMAGE" >/dev/null 2>&1 && return 0
+    info "이미지 다운로드 중: $VLLM_IMAGE (처음 한 번만, 수 분 소요)"
+    docker_ pull "$VLLM_IMAGE" || die "이미지를 받지 못했습니다. vllm.env 의 VLLM_IMAGE 태그를 확인하세요."
+}
+
+show_gpus() {
+    local idx name used total
+    while IFS=', ' read -r idx used total name; do
+        printf "  GPU%s  %s  실사용 %5.1f / %.0f GiB  → 새 모델용 여유 약 %.1f GiB\n" \
+            "$idx" "$name" "$(bc -l <<<"$used/1024")" "$(bc -l <<<"$total/1024")" "$(bc -l <<<"$(gpu_free_mib "$idx")/1024")"
+    done < <(nvidia-smi --query-gpu=index,memory.used,memory.total,name --format=csv,noheader,nounits)
+}
+
+# ---------------------------------------------------------------- commands
+cmd_ls() {
+    echo "사용 가능한 모델 설정 (models/*.yaml):"
+    local cfgs=("$CONFIG_DIR"/*.yaml) f
+    (( ${#cfgs[@]} )) || { echo "  (없음) ./vllm pull <HF repo id> 로 모델을 받으세요"; return 0; }
+    for f in "$CONFIG_DIR"/*.yaml; do
+        plan "$f" "$(config_gpus "$f")"
+        printf "  %-26s GPU %s장  %s\n" "$(basename "$f" .yaml)" "$(config_gpus "$f")" "$PLAN_DESC"
+    done
+}
+
+cmd_ps() {
+    local out
+    out=$(list_containers)
+    if [[ -z "$out" ]]; then
+        echo "실행 중인 vllm 컨테이너가 없습니다."
+    else
+        { echo -e "CONTAINER\tGPU\tMODEL\tPORT\t예약(GiB)\tSTATUS"
+          awk -F'\t' -v OFS='\t' '{ $5 = ($5 ~ /^[0-9]+$/ ? sprintf("%.1f", $5/1024) : "-"); NF = 6; print }' <<<"$out"; } | column -t -s $'\t'
+    fi
+    echo; show_gpus
+}
+
+cmd_up() {
+    local model="" gpus="" port="" extra=()
+    while (( $# )); do
+        case "$1" in
+            -g|--gpu|--gpus) gpus="$2"; shift 2 ;;
+            -p|--port) port="$2"; shift 2 ;;
+            --) shift; extra=("$@"); break ;;
+            -*) die "알 수 없는 옵션: $1" ;;
+            *) [[ -z "$model" ]] || die "모델은 하나만 지정하세요"; model="$1"; shift ;;
+        esac
+    done
+    [[ -n "$model" ]] || die "모델 이름이 필요합니다. 예: ./vllm up qwen3.5-9b -g 0"
+
+    local cfg; cfg=$(config_path "$model"); model=$(basename "$cfg" .yaml)
+    local ngpu; ngpu=$(config_gpus "$cfg")
+    [[ -z "$gpus" ]] || [[ "$gpus" =~ ^[0-9]+(,[0-9]+)*$ ]] || die "GPU 지정 형식이 잘못됐습니다: $gpus (예: 0 또는 0,1)"
+    [[ -n "$gpus" ]] && ngpu=$(awk -F, '{print NF}' <<<"$gpus")
+
+    # 필요 메모리 계산
+    plan "$cfg" "$ngpu"
+    info "메모리 계산: $PLAN_DESC"
+
+    # GPU 자동 선택: 새 모델용 여유가 큰 순서로 ngpu 장
+    if [[ -z "$gpus" ]]; then
+        gpus=$(for g in $(nvidia-smi --query-gpu=index --format=csv,noheader); do echo "$g $(gpu_free_mib "$g")"; done \
+            | sort -k2 -nr | head -n "$ngpu" | awk '{print $1}' | sort -n | paste -sd, -)
+    fi
+    local tp="$ngpu" name="vllm-$model-g${gpus//,/-}"
+    # 교체 대상: 같은 모델 + 같은 GPU 로 떠 있는 컨테이너 (예전 이름 vllm-gpu0 같은 것 포함)
+    local old; old=$(list_containers | awk -F'\t' -v m="$model" -v g="$gpus" '$3 == m && $2 == g { print $1; exit }')
+    [[ -n "$old" ]] || old="$name"
+
+    # 용량 검사: 하나라도 모자라면 아무것도 건드리지 않고 거부
+    local g free short=0
+    for g in ${gpus//,/ }; do
+        free=$(gpu_free_mib "$g" "$old")
+        if (( PLAN_NEED_MIB > free )); then
+            echo "❌ GPU$g 공간 부족: 필요 $(bc -l <<<"$PLAN_NEED_MIB/1024" | xargs printf '%.1f')GiB > 여유 $(bc -l <<<"$free/1024" | xargs printf '%.1f')GiB" >&2
+            short=1
+        fi
+    done
+    if (( short )); then
+        echo >&2; cmd_ps >&2; echo >&2
+        die "띄울 수 없습니다. 다른 GPU(-g)를 쓰거나, ./vllm down <모델> 로 공간을 비우거나, 설정의 max-model-len 을 줄이세요."
+    fi
+
+    # 포트: 교체면 기존 포트 재사용, 아니면 PORT_BASE+첫GPU 부터 빈 포트
+    if [[ -z "$port" ]]; then
+        port=$(docker_ inspect -f '{{index .Config.Labels "vllm-serve.port"}}' "$old" 2>/dev/null || true)
+        if [[ -z "$port" ]]; then
+            port=$(( PORT_BASE + ${gpus%%,*} ))
+            while port_in_use "$port" "$old"; do port=$(( port + 1 )); done
+        fi
+    elif port_in_use "$port" "$old"; then
+        die "포트 $port 는 이미 사용 중입니다. (./vllm ps)"
+    fi
+
+    # 같은 모델+GPU 조합이 이미 있으면 교체
+    if docker_ inspect "$old" >/dev/null 2>&1; then
+        info "기존 $old 교체"
+        run docker_ rm -f "$old" >/dev/null
+    fi
+
+    mkdir -p "$HF_CACHE_DIR" "$VLLM_CACHE_DIR"
+    ensure_image
+
+    info "모델: $model | GPU: $gpus (TP=$tp) | 포트: $port | 인증: $([[ -f "$API_KEY_FILE" ]] && echo 켜짐 || echo 꺼짐) | 이미지: $VLLM_IMAGE"
+    run docker_ run -d --name "$name" \
+        --gpus "\"device=$gpus\"" --ipc=host --restart unless-stopped \
+        -p "${BIND_ADDR:-0.0.0.0}:$port:8000" \
+        -v "$MODELS_DIR:/models:ro" \
+        -v "$HF_CACHE_DIR:/root/.cache/huggingface" \
+        -v "$VLLM_CACHE_DIR:/root/.cache/vllm" \
+        -v "$CONFIG_DIR:/configs:ro" \
+        "${TOKEN_ARGS[@]}" "${AUTH_ARGS[@]}" \
+        --label "$LABEL=$gpus" --label "vllm-serve.model=$model" --label "vllm-serve.port=$port" \
+        --label "vllm-serve.mem=$PLAN_NEED_MIB" \
+        "$VLLM_IMAGE" \
+        --config "/configs/$model.yaml" \
+        --host 0.0.0.0 --port 8000 \
+        --tensor-parallel-size "$tp" \
+        $PLAN_ARGS \
+        "${extra[@]}" >/dev/null
+    (( DRY_RUN )) && return 0
+
+    wait_ready "$name" "$port" "$(config_served_name "$cfg")" "$model"
+}
+
+wait_ready() {
+    local name="$1" port="$2" served="$3" model="$4"
+    echo "------------------------------------------------------------"
+    echo "로그 표시 중... 준비되면 자동으로 빠져나옵니다 (Ctrl+C 해도 서버는 계속 실행)"
+    echo "------------------------------------------------------------"
+    docker_ logs -f "$name" 2>&1 &
+    local logpid=$!
+    trap 'kill $logpid 2>/dev/null; echo; echo "↪ 로그만 닫았습니다. 서버는 백그라운드에서 계속 기동 중: ./vllm logs"; exit 0' INT
+
+    while true; do
+        # 기동 중에 한 번이라도 죽었으면 실패로 보고, 재시작 루프를 막기 위해 컨테이너를 지운다
+        if [[ "$(docker_ inspect -f '{{.State.Running}} {{.RestartCount}}' "$name" 2>/dev/null)" != "true 0" ]]; then
+            sleep 1; kill $logpid 2>/dev/null; trap - INT
+            docker_ rm -f "$name" >/dev/null 2>&1 || true
+            die "기동에 실패했습니다. 위 로그의 에러를 확인하세요. (컨테이너는 정리했습니다)"
+        fi
+        if curl -sf "http://localhost:$port/health" >/dev/null 2>&1; then break; fi
+        sleep 3
+    done
+    kill $logpid 2>/dev/null; wait $logpid 2>/dev/null || true; trap - INT
+
+    local auth=""
+    [[ -f "$API_KEY_FILE" ]] && auth=" -H \"Authorization: Bearer \$(./vllm key)\""
+    cat <<EOF
+
+============================================================
+✅ 준비 완료: $name  →  http://localhost:$port/v1
+   모델 이름: $served
+
+   curl http://localhost:$port/v1/chat/completions -H 'Content-Type: application/json'$auth \\
+     -d '{"model": "$served", "messages": [{"role": "user", "content": "안녕"}]}'
+
+   로그: ./vllm logs $model   종료: ./vllm down $model
+============================================================
+EOF
+}
+
+# 대상: 비우면 전부, "0" / "0,1" 이면 해당 GPU를 쓰는 컨테이너, 그 외엔 모델 별칭 또는 컨테이너 이름
+match_targets() {
+    local target="${1:-}" cname cgpus cmodel _rest
+    while IFS=$'\t' read -r cname cgpus cmodel _rest; do
+        [[ -z "$cname" ]] && continue
+        if [[ -z "$target" || "$cname" == "$target" || "$cmodel" == "$target" ]] \
+            || { [[ "$target" =~ ^[0-9,]+$ ]] && gpus_overlap "$target" "$cgpus"; }; then
+            echo "$cname"
+        fi
+    done < <(list_containers)
+}
+
+cmd_down() {
+    local targets; targets=$(match_targets "${1:-}")
+    [[ -n "$targets" ]] || { echo "종료할 컨테이너가 없습니다."; return 0; }
+    local c; for c in $targets; do info "$c 종료"; run docker_ rm -f "$c" >/dev/null; done
+}
+
+cmd_logs() {
+    local targets; targets=$(match_targets "${1:-}")
+    [[ -n "$targets" ]] || die "실행 중인 컨테이너가 없습니다."
+    (( $(wc -l <<<"$targets") == 1 )) || die "여러 개가 해당됩니다. 이름으로 지정하세요: $(paste -sd' ' <<<"$targets")"
+    docker_ logs -f --tail 200 "$targets"
+}
+
+# models/<alias>.yaml 생성. 모델 폴더가 있으면 README/config.json 을 보고 옵션을 채운다
+write_config() {
+    local repo="$1" alias="${2:-}"
+    [[ -n "$alias" ]] || alias=$(tr '[:upper:]' '[:lower:]' <<<"${repo##*/}")
+    local f="$CONFIG_DIR/$alias.yaml"
+    if [[ -e "$f" ]]; then
+        echo "ℹ️  설정 파일이 이미 있어서 그대로 둡니다: $f"
+        return 0
+    fi
+
+    # 받아둔 폴더(org__name)가 있으면 그걸 쓰고, 없으면 repo id 로 (up 할 때 hf-cache 로 자동 다운로드)
+    local dir="$MODELS_DIR/${repo//\//__}" model_ref="$repo" mdir=""
+    [[ -d "$dir" ]] && { model_ref="/models/${repo//\//__}"; mdir="$dir"; }
+    local gpu_gib
+    gpu_gib=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -1 | awk '{print $1/1024}')
+
+    python3 "$ROOT/lib/gen-config.py" "$repo" "$mdir" "$model_ref" "$gpu_gib" >"$f.tmp" && mv "$f.tmp" "$f" \
+        || { rm -f "$f.tmp"; die "설정 파일 생성 실패"; }
+    echo "✅ 설정 파일 생성: $f"
+    echo "------------------------------------------------------------"
+    cat "$f"
+    echo "------------------------------------------------------------"
+    echo "실행: ./vllm up $alias"
+}
+
+gib() { bc -l <<<"$1/1024" | xargs printf '%.1f'; }
+
+# 다운로드 전에 HF 정보(config.json, 파일 크기)만으로 "가장 가볍게 띄워도"(컨텍스트 4k, 동시 1) 필요한 메모리를 계산
+# → FIT=ok|no|unknown, FIT_MSG, FIT_JSON(웹 관리 화면용)
+fit_check() {
+    local repo="$1" tmp total ngpu cap n1 d1 nn dn
+    tmp=$(mktemp --suffix=.yaml)
+    printf 'model: %s\nmax-model-len: 4096\n# concurrency: 1\n' "$repo" >"$tmp"
+    total=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -1)
+    ngpu=$(nvidia-smi -L | wc -l)
+    cap=$(( total - SAFETY_MIB ))
+    plan "$tmp" 1;       n1=$PLAN_NEED_MIB; d1=$PLAN_DESC
+    plan "$tmp" "$ngpu"; nn=$PLAN_NEED_MIB; dn=$PLAN_DESC
+    rm -f "$tmp"
+    if [[ "$d1" == ⚠️* ]]; then
+        FIT=unknown; FIT_MSG="필요 메모리를 계산할 수 없습니다 (HF 에서 config.json/가중치 크기를 못 읽음)"
+    elif (( n1 <= cap )); then
+        FIT=ok; FIT_MSG="GPU 1장으로 띄울 수 있습니다 (최소 $(gib "$n1") GiB · $d1)"
+    elif (( nn <= cap )); then
+        FIT=ok; FIT_MSG="GPU ${ngpu}장이 필요합니다 (최소 GPU당 $(gib "$nn") GiB · $dn)"
+    else
+        FIT=no; FIT_MSG="GPU ${ngpu}장을 다 써도 띄울 수 없습니다: 최소 GPU당 $(gib "$nn") GiB 필요 > 한 장 $(gib "$cap") GiB ($dn)"
+    fi
+    FIT_JSON=$(python3 -c '
+import json, sys
+fit, msg, n1, nn, cap, ngpu = sys.argv[1:7]
+print(json.dumps({"fit": fit, "message": msg, "need1_mib": int(n1), "need_all_mib": int(nn),
+                  "cap_mib": int(cap), "gpus": int(ngpu)}, ensure_ascii=False))' "$FIT" "$FIT_MSG" "$n1" "$nn" "$cap" "$ngpu")
+}
+
+cmd_fit() {
+    local repo="${1:-}"
+    repo="${repo#https://huggingface.co/}"; repo="${repo%/}"
+    [[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || die "HF repo id 형식이 아닙니다: '$repo'"
+    fit_check "$repo"
+    if [[ "${2:-}" == "--json" ]]; then echo "$FIT_JSON"; else echo "$FIT_MSG"; fi
+}
+
+cmd_pull() {
+    local repo="" alias="" force=0
+    while (( $# )); do
+        case "$1" in
+            -f|--force|-y|--yes) force=1; shift ;;
+            -*) die "알 수 없는 옵션: $1" ;;
+            *) if [[ -z "$repo" ]]; then repo="$1"; else alias="$1"; fi; shift ;;
+        esac
+    done
+    [[ -n "$repo" ]] || read -rp "Hugging Face repo id (예: Qwen/Qwen3-8B): " repo
+    repo="${repo#https://huggingface.co/}"; repo="${repo%/}"
+    [[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || die "HF repo id 형식이 아닙니다: '$repo' (예: Qwen/Qwen3-8B)"
+
+    local hf; hf=$(command -v hf || command -v huggingface-cli || true)
+    [[ -n "$hf" ]] || die "hf CLI 가 없습니다. 설치: pip install -U huggingface_hub"
+    local dir="$MODELS_DIR/${repo//\//__}"
+
+    # 이 서버 GPU 로 띄울 수 없는 모델이면 받기 전에 확인
+    info "필요 메모리 확인 중 (HF 정보 기준, 아직 받지 않음)"
+    fit_check "$repo"
+    case "$FIT" in
+        ok) echo "   ✅ $FIT_MSG" ;;
+        unknown) echo "   ⚠️  $FIT_MSG" ;;
+        no)
+            echo "   ❌ $FIT_MSG"
+            if (( ! force )); then
+                if [[ -t 0 ]]; then
+                    local ans; read -rp "   그래도 다운로드할까요? [y/N] " ans
+                    [[ "$ans" =~ ^[Yy] ]] || die "다운로드를 취소했습니다."
+                else
+                    die "띄울 수 없는 모델이라 받지 않습니다. 그래도 받으려면 --force 를 붙이세요."
+                fi
+            fi ;;
+    esac
+
+    info "다운로드: $repo → $dir"
+    echo "   (중간에 끊겨도 같은 명령을 다시 실행하면 이어서 받습니다)"
+    # vLLM 이 안 쓰는 원본(original)/애플(metal)/ONNX/OpenVINO 가중치는 제외
+    run "$hf" download "$repo" --local-dir "$dir" --exclude "original/*" "metal/*" "onnx/*" "openvino/*" \
+        || die "다운로드 실패. gated 모델이면 HF 에서 승인받고 'hf auth login' 했는지 확인하세요."
+    (( DRY_RUN )) && return 0
+    [[ -f "$dir/config.json" ]] || echo "⚠️  config.json 이 없습니다. vLLM 이 지원하는 모델 형식인지 확인하세요."
+
+    write_config "$repo" "$alias"
+}
+
+cmd_new() {
+    local repo="${1:-}"
+    [[ "$repo" == */* ]] || die "HF repo id 가 필요합니다. 예: ./vllm new Qwen/Qwen3-8B"
+    write_config "$repo" "${2:-}"
+}
+
+# models/<alias>.yaml 의 가중치 위치: /models/X → MODELS_DIR/X, HF repo id → hf-cache 의 해당 repo
+model_files_dir() {
+    local m; m=$(sed -n 's/^model: *//p' "$1" | head -1 | tr -d "'\"")
+    if [[ "$m" == /models/* ]]; then echo "$MODELS_DIR/${m#/models/}"
+    elif [[ "$m" == */* ]]; then echo "$HF_CACHE_DIR/hub/models--${m//\//--}"
+    fi
+}
+
+cmd_rm() {
+    local alias="" files=0
+    while (( $# )); do
+        case "$1" in
+            --files) files=1; shift ;;
+            -*) die "알 수 없는 옵션: $1" ;;
+            *) alias="$1"; shift ;;
+        esac
+    done
+    [[ -n "$alias" ]] || die "사용법: ./vllm rm <모델> [--files]   (--files: 가중치 파일까지 삭제)"
+    local cfg; cfg=$(config_path "$alias"); alias=$(basename "$cfg" .yaml)
+
+    local running; running=$(list_containers | awk -F'\t' -v m="$alias" '$3 == m { print $1 }' | paste -sd' ' - || true)
+    [[ -z "$running" ]] || die "실행 중인 모델은 지울 수 없습니다. 먼저 끄세요: ./vllm down $alias  ($running)"
+
+    if (( files )); then
+        local dir; dir=$(model_files_dir "$cfg")
+        local shared; shared=$(grep -l -x -F "$(grep -m1 '^model:' "$cfg")" "$CONFIG_DIR"/*.yaml | grep -v -x -F "$cfg" | xargs -r -n1 basename | sed 's/\.yaml$//' | paste -sd' ' - || true)
+        if [[ -z "$dir" ]]; then
+            echo "⚠️  가중치 위치를 알 수 없어 설정 파일만 지웁니다."
+        elif [[ -n "$shared" ]]; then
+            echo "⚠️  다른 설정($shared)도 같은 가중치를 써서 파일은 남겨둡니다: $dir"
+        elif [[ ! -e "$dir" ]]; then
+            echo "ℹ️  가중치 폴더가 이미 없습니다: $dir"
+        else
+            # 안전장치: 반드시 MODELS_DIR 또는 HF_CACHE_DIR 바로 아래 폴더만 지운다
+            local real parent; real=$(readlink -f "$dir"); parent=$(dirname "$real")
+            [[ "$parent" == "$(readlink -f "$MODELS_DIR")" || "$parent" == "$(readlink -f "$HF_CACHE_DIR")/hub" ]] \
+                || die "모델 저장소 밖의 경로라 지우지 않습니다: $real"
+            [[ "$real" != "$(readlink -f "$HF_CACHE_DIR")" && "$real" != "$(readlink -f "$VLLM_CACHE_DIR")" ]] \
+                || die "캐시 폴더 자체는 지우지 않습니다: $real"
+            local size; size=$(du -sh "$real" 2>/dev/null | cut -f1)
+            info "가중치 삭제: $real ($size)"
+            if ! run rm -rf -- "$real" 2>/dev/null; then
+                # 컨테이너(root)가 만든 파일이 섞여 있으면 docker 로 지운다
+                info "권한이 없는 파일이 있어 docker 로 지웁니다"
+                run docker_ run --rm -v "$parent:/p" --entrypoint rm "$VLLM_IMAGE" -rf -- "/p/$(basename "$real")" \
+                    || die "가중치 삭제 실패: $real"
+            fi
+            echo "✅ $size 확보"
+        fi
+    fi
+    run rm -f -- "$cfg"
+    echo "✅ 모델 설정 삭제: $cfg"
+}
+
+cmd_key() {
+    case "${1:-}" in
+        "")
+            [[ -f "$API_KEY_FILE" ]] || die "API 키가 없습니다 (인증 꺼짐). 생성: ./vllm key new"
+            api_key ;;
+        new)
+            local key; key="sk-$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+            ( umask 077; echo "VLLM_API_KEY=$key" >"$API_KEY_FILE" )
+            echo "✅ 새 API 키를 만들었습니다 ($API_KEY_FILE, 권한 600):" >&2
+            echo "$key"
+            echo "   실행 중인 서버에는 다시 up 해야 적용됩니다." >&2 ;;
+        off)
+            rm -f "$API_KEY_FILE"
+            echo "🔓 API 키를 지웠습니다. 다음 up 부터 인증 없이 뜹니다." ;;
+        *) die "사용법: ./vllm key [new|off]" ;;
+    esac
+}
+
+cmd_interactive() {
+    local cfgs=("$CONFIG_DIR"/*.yaml) i
+    (( ${#cfgs[@]} )) || die "모델 설정이 없습니다. 먼저 받으세요: ./vllm pull <HF repo id>"
+    echo "============================================================"
+    echo " vLLM 서버 ($VLLM_IMAGE)"
+    echo "============================================================"
+    local running; running=$(list_containers)
+    [[ -n "$running" ]] && { echo "실행 중:"; echo "$running" | awk -F'\t' '{printf "  %-22s GPU %-4s :%s\n", $3, $2, $4}'; echo; }
+    show_gpus; echo
+    for i in "${!cfgs[@]}"; do
+        plan "${cfgs[$i]}" "$(config_gpus "${cfgs[$i]}")"
+        printf "  [%d] %-26s GPU %s장 × %5.1f GiB\n" "$i" "$(basename "${cfgs[$i]}" .yaml)" \
+            "$(config_gpus "${cfgs[$i]}")" "$(bc -l <<<"$PLAN_NEED_MIB/1024")"
+    done
+    local choice; read -rp "모델 번호: " choice
+    [[ "$choice" =~ ^[0-9]+$ && -n "${cfgs[$choice]:-}" ]] || die "잘못된 번호입니다."
+    local cfg="${cfgs[$choice]}"
+    local gpus; read -rp "GPU (예: 0, 1, 0,1) [엔터 = 자동 선택]: " gpus
+    if [[ -n "$gpus" ]]; then cmd_up "$(basename "$cfg" .yaml)" -g "$gpus"; else cmd_up "$(basename "$cfg" .yaml)"; fi
+}
+
+usage() {
+    cat <<EOF
+사용법: ./vllm [명령]
+
+  (인자 없음)                  대화형으로 모델/GPU 선택 후 실행
+  up <모델> [-g 0|1|0,1] [-p 포트] [-- vllm 추가옵션...]
+                               모델 실행. 필요 메모리를 계산해 그만큼만 잡고, 여유 있는 GPU 에 같이 띄움.
+                               공간이 모자라면 거부. GPU 미지정 시 여유가 큰 GPU 자동 선택, TP = GPU 개수
+  down [모델|GPU|이름]         종료 (인자 없으면 전부)
+  ps                           실행 중인 서버 + GPU 여유
+  logs [모델|GPU|이름]         로그 보기
+  ls                           모델 목록 + 필요 메모리
+  pull [HF repo id] [별칭]     /mnt/disk/vllm 에 다운로드 + models/<별칭>.yaml 자동 생성
+                               받기 전에 필요 메모리를 계산해 GPU 전부로도 못 띄우면 확인 (--force: 묻지 않음)
+  fit <HF repo id>             받지 않고 이 서버에서 띄울 수 있는지만 계산
+  new <HF repo id> [별칭]      다운로드 없이 설정 파일만 생성
+  rm <모델> [--files]          모델 설정 삭제 (--files: 가중치 파일까지 삭제, 실행 중이면 거부)
+  key [new|off]                API 키 보기 / 새로 만들기(인증 켜기) / 지우기(인증 끄기)
+
+  -n, --dry-run                실제로 실행하지 않고 docker 명령만 출력
+
+예:
+  ./vllm up gpt-oss-20b -g 0 && ./vllm up qwen3-vl-8b -g 0   # GPU0 에 두 모델
+  ./vllm up qwen2.5-vl-32b -g 0,1
+  ./vllm up gpt-oss-20b -g 1 -- --max-num-seqs 16
+  ./vllm pull Qwen/Qwen3-8B && ./vllm up qwen3-8b
+EOF
+}
+
+# ---------------------------------------------------------------- main
+args=()
+for a in "$@"; do
+    case "$a" in -n|--dry-run) DRY_RUN=1 ;; *) args+=("$a") ;; esac
+done
+set -- "${args[@]+"${args[@]}"}"
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+    "")               cmd_interactive ;;
+    up|start|serve)   cmd_up "$@" ;;
+    down|stop)        cmd_down "$@" ;;
+    ps|status)        cmd_ps ;;
+    logs|log)         cmd_logs "$@" ;;
+    ls|list)          cmd_ls ;;
+    new)              cmd_new "$@" ;;
+    rm|delete)        cmd_rm "$@" ;;
+    pull|download)    cmd_pull "$@" ;;
+    fit)              cmd_fit "$@" ;;
+    key)              cmd_key "$@" ;;
+    -h|--help|help)   usage ;;
+    *)                die "알 수 없는 명령: $cmd (./vllm help)" ;;
+esac
