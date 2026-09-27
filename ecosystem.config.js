@@ -20,7 +20,6 @@ module.exports = {
       ignore_watch: ["**/__pycache__/**", "**/*.pyc", ".venv", "data"],
       watch_delay: 1000,
       time: true,
-      env: { PORT: "8021" },
     },
   ],
 };
