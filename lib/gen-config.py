@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """다운로드한 모델 폴더를 보고 vllm 용 models/<alias>.yaml 을 만든다.
 
-사용: gen-config.py <HF repo id> <모델 폴더 또는 ""> <컨테이너 안 model 경로> <GPU 메모리 GiB>
+사용: gen-config.py <HF repo id> <모델 폴더 또는 ""> <컨테이너 안 model 경로> <GPU 메모리 GiB> [사용 가능 GPU 수]
 결과 YAML 을 stdout 으로 출력한다. (호스트 python3.8 호환, 표준 라이브러리만 사용)
 """
 import json
@@ -12,6 +12,7 @@ import shlex
 import sys
 
 repo, model_dir, model_ref, gpu_gib = sys.argv[1], sys.argv[2], sys.argv[3], float(sys.argv[4])
+max_gpus = int(sys.argv[5]) if len(sys.argv) > 5 else None
 
 # README 의 `vllm serve` 옵션 중 ./vllm 이 직접 관리하거나 여기서 쓸 수 없는 것
 SKIP = {
@@ -97,6 +98,8 @@ if model_dir:
     st = [f for f in top if f.endswith(".safetensors")] or [f for f in top if f.endswith(".bin")]
     weight_bytes = sum(os.path.getsize(os.path.join(model_dir, f)) for f in st)
 gpus = max(1, math.ceil(weight_bytes / 2**30 / (gpu_gib * 0.75))) if weight_bytes else 1
+if max_gpus:
+    gpus = min(gpus, max_gpus)  # 더 필요해도 사용 가능한 만큼만 (실행 시 용량 검사에서 판단)
 
 opts = {}
 flags = readme_flags()

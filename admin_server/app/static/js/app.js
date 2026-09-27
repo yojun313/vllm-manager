@@ -286,7 +286,10 @@
       const fits = (o) => freeFor(o, m) >= m.need_mib;
       const ranked = opts.map((o) => [o, freeFor(o, m)]).sort((a, b) => b[1] - a[1]);
       let ok, msg;
-      if (sel === 'auto') {
+      if (!opts.length) {
+        ok = false;
+        msg = `GPU ${m.gpus}장이 필요하지만 사용 가능한 GPU 는 ${G.length}장입니다 (vllm.env 의 GPU_COUNT)`;
+      } else if (sel === 'auto') {
         ok = opts.some(fits);
         msg = ok ? `GPU ${ranked[0][0].join('+')} 에 들어갑니다 · 여유 ${gib(ranked[0][1])} GiB`
           : `공간 부족 · 가장 큰 여유 ${gib(Math.max(0, ranked[0]?.[1] || 0))} GiB`;
@@ -528,9 +531,9 @@
   async function checkBeforePull(repo) {
     const r = await api(`/api/pull/check?repo=${encodeURIComponent(repo)}`);
     if (r.fit === 'ok') { toast(r.message, 'ok'); return { go: true, force: false }; }
-    const gpus = r.gpus || 2;
+    const gpus = r.gpus || G.length;
     const html = r.fit === 'no'
-      ? `<div class="fit-box no"><b>A100 80GB ${gpus}장을 모두 써도 띄울 수 없는 모델입니다.</b><br>
+      ? `<div class="fit-box no"><b>GPU ${gpus}장(${esc((G[0]?.name || 'GPU').replace('NVIDIA ', ''))})을 모두 써도 띄울 수 없는 모델입니다.</b><br>
            가장 가볍게 띄워도(컨텍스트 4k, 동시 1) GPU 한 장에 들어가지 않아요.</div>
          <dl class="fit-grid">
            <dt>모델</dt><dd>${esc(r.repo)}</dd>

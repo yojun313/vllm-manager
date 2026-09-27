@@ -49,6 +49,7 @@ cd vllm-manager
 
 - `VLLM_IMAGE`: GPU 드라이버가 지원하는 CUDA 버전의 이미지 태그
 - `MODELS_DIR`, `HF_CACHE_DIR`, `VLLM_CACHE_DIR`: 모델 가중치와 캐시를 저장할 경로
+- `GPU_COUNT` 또는 `GPU_IDS`: vllm-manager 가 사용할 GPU. 둘 다 비워두면 감지된 모든 GPU를 사용합니다.
 
 `models/` 디렉터리의 모델 설정은 서버마다 다르므로 저장소에 포함되지 않습니다. 설치 직후에는 비어 있으며, `./vllm pull` 로 모델을 추가합니다.
 
@@ -97,7 +98,7 @@ curl http://localhost:8000/v1/chat/completions \
 
 | 옵션 | 설명 |
 |---|---|
-| `-g`, `--gpu` | 사용할 GPU. `0`, `1`, `0,1` 형식이며, 지정한 개수만큼 텐서 병렬(TP)로 실행합니다. 생략하면 설정 파일의 `# gpus: N` 개수만큼 여유가 큰 GPU를 선택합니다. |
+| `-g`, `--gpu` | 사용할 GPU. `0`, `1`, `0,1` 형식이며, 지정한 개수만큼 텐서 병렬(TP)로 실행합니다. 생략하면 설정 파일의 `# gpus: N` 개수만큼 여유가 큰 GPU를 선택합니다. `GPU_COUNT`·`GPU_IDS` 범위 밖의 GPU는 지정할 수 없습니다. |
 | `-p`, `--port` | 호스트 포트. 생략하면 `PORT_BASE + 첫 번째 GPU 번호` 부터 사용 가능한 포트를 선택합니다. 같은 모델을 교체할 때는 기존 포트를 유지합니다. |
 | `-- ...` | 이후 인자는 vLLM 에 그대로 전달되며 설정 파일보다 우선합니다. 예: `./vllm up qwen3-8b -- --max-num-seqs 16` |
 
@@ -115,7 +116,7 @@ curl http://localhost:8000/v1/chat/completions \
 
 `pull` 은 다음 순서로 동작합니다.
 
-1. **실행 가능 여부 확인**: Hugging Face 의 `config.json` 과 파일 크기만으로 필요 메모리를 계산합니다. 가장 가벼운 조건(컨텍스트 4,096 토큰, 동시 요청 1개)으로도 모든 GPU를 사용해 실행할 수 없는 모델이면 다운로드 여부를 확인합니다. 터미널이 아닌 환경에서는 `--force` 없이 중단합니다.
+1. **실행 가능 여부 확인**: Hugging Face 의 `config.json` 과 파일 크기만으로 필요 메모리를 계산합니다. 가장 가벼운 조건(컨텍스트 4,096 토큰, 동시 요청 1개)으로도 사용 가능한 GPU(`GPU_COUNT`) 전부로 실행할 수 없는 모델이면 다운로드 여부를 확인합니다. 터미널이 아닌 환경에서는 `--force` 없이 중단합니다.
 2. **다운로드**: `MODELS_DIR/<org>__<name>` 에 내려받습니다. vLLM 이 사용하지 않는 `original/`, `metal/`, `onnx/`, `openvino/` 는 제외합니다. 중단된 경우 같은 명령으로 이어받을 수 있습니다.
 3. **설정 파일 생성**: `models/<별칭>.yaml` 을 생성합니다. 이미 있으면 덮어쓰지 않습니다.
 
@@ -186,7 +187,7 @@ KV 캐시            = 토큰당 KV 크기 × max-model-len × 동시 요청 수
 
 - 모델 실행·재시작·중지·삭제
 - 모델 다운로드 (바이트 단위 진행률, 속도, 남은 시간 표시, 실행 불가 모델에 대한 확인)
-- GPU 두 장의 메모리 사용량·사용률·온도·전력 실시간 표시
+- GPU별 메모리 사용량·사용률·온도·전력 실시간 표시 (`GPU_COUNT`·`GPU_IDS` 로 지정한 GPU)
 - 모델 기동 진행률(가중치 로딩, 컴파일, CUDA graph 캡처 등 단계별)과 로그 실시간 표시
 - 아이디·비밀번호 로그인
 
@@ -235,7 +236,7 @@ pm2 start ecosystem.config.js
 pm2 save
 ```
 
-`ecosystem.config.js` 는 `admin_server/app/`, `run.py`, `.env` 가 변경되면 웹 서버를 자동으로 재시작하도록 설정되어 있습니다.
+`ecosystem.config.js` 는 `admin_server/app/`, `run.py`, `.env` 와 `vllm.env` 가 변경되면 웹 서버를 자동으로 재시작하도록 설정되어 있습니다. 웹 서버는 `vllm.env` 를 시작 시점에 읽으므로, pm2 없이 실행하는 경우 `vllm.env` 를 변경한 뒤 웹 서버를 재시작하십시오.
 
 > **중요** pm2 로 실행한 앱은 pm2 데몬의 권한을 그대로 사용합니다. `docker` 그룹에 추가하기 전부터 실행 중이던 pm2 데몬 아래에서는 웹 관리 콘솔도 docker 에 접근할 수 없습니다. 이 경우 pm2 데몬을 새 권한으로 다시 시작하십시오. pm2 로 실행 중인 다른 앱도 함께 재시작됩니다.
 >
@@ -308,6 +309,8 @@ Open WebUI 가 같은 서버의 docker 컨테이너에서 실행 중이면 `loca
 | `MODELS_DIR` | 모델 가중치 저장 경로. 컨테이너에는 `/models` 로 읽기 전용 마운트됩니다. | `/mnt/disk/vllm` |
 | `HF_CACHE_DIR` | 설정 파일의 `model` 이 HF 저장소 이름일 때 사용하는 캐시 | `/mnt/disk/vllm/hf-cache` |
 | `VLLM_CACHE_DIR` | torch.compile·CUDA graph 캐시. 재시작 시 기동 시간을 줄입니다. | `/mnt/disk/vllm/vllm-cache` |
+| `GPU_COUNT` | 사용할 GPU 수. 번호가 앞선 GPU부터 N장을 사용합니다. | `2` |
+| `GPU_IDS` | 사용할 GPU 번호 목록(예: `0,2`). 지정하면 `GPU_COUNT` 보다 우선합니다. | (없음) |
 | `PORT_BASE` | 모델 서버 포트 시작값 | `8000` |
 | `BIND_ADDR` | 모델 서버 포트의 바인드 주소 | `0.0.0.0` |
 | `KV_CONCURRENCY` | KV 캐시 산정 시 동시 요청 수 | `4` |

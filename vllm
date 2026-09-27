@@ -15,6 +15,30 @@ set +a
 
 DRY_RUN=0
 
+# 이 도구가 쓰는 GPU 번호 목록 (vllm.env 의 GPU_IDS > GPU_COUNT > 감지된 전체)
+gpu_ids() {
+    if [[ -z "${_GPU_IDS:-}" ]]; then
+        local all; all=$(nvidia-smi --query-gpu=index --format=csv,noheader | tr -d ' ')
+        if [[ -n "${GPU_IDS:-}" ]]; then
+            local g
+            for g in ${GPU_IDS//,/ }; do
+                grep -qx "$g" <<<"$all" || { echo "❌ vllm.env 의 GPU_IDS 에 없는 GPU 번호가 있습니다: $g (감지된 GPU: $(paste -sd, <<<"$all"))" >&2; exit 1; }
+            done
+            _GPU_IDS=$(tr ',' '\n' <<<"$GPU_IDS" | sed '/^$/d')
+        elif [[ -n "${GPU_COUNT:-}" ]]; then
+            [[ "$GPU_COUNT" =~ ^[1-9][0-9]*$ ]] || { echo "❌ vllm.env 의 GPU_COUNT 가 올바르지 않습니다: $GPU_COUNT" >&2; exit 1; }
+            _GPU_IDS=$(head -n "$GPU_COUNT" <<<"$all")
+        else
+            _GPU_IDS=$all
+        fi
+    fi
+    echo "$_GPU_IDS"
+}
+gpu_count() { gpu_ids | grep -c .; }
+gpu_total_mib() { nvidia-smi -i "$(gpu_ids | head -1)" --query-gpu=memory.total --format=csv,noheader,nounits; }
+is_managed_gpu() { gpu_ids | grep -qx "$1"; }
+gpu_ids >/dev/null   # 한 번 계산해 캐시 (설정이 잘못되면 여기서 바로 종료)
+
 # ---------------------------------------------------------------- helpers
 die()  { echo "❌ $*" >&2; exit 1; }
 info() { echo "▶ $*"; }
@@ -60,7 +84,7 @@ list_containers() {
 
 # models/x.yaml 을 GPU tp 장으로 띄울 때의 메모리 계획 → PLAN_NEED_MIB, PLAN_ARGS, PLAN_DESC
 plan() {
-    local total; total=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -1)
+    local total; total=$(gpu_total_mib)
     eval "$(python3 "$ROOT/lib/plan.py" "$1" "$MODELS_DIR" "$HF_CACHE_DIR" "$2" "$total")"
 }
 
@@ -110,6 +134,7 @@ ensure_image() {
 show_gpus() {
     local idx name used total
     while IFS=', ' read -r idx used total name; do
+        is_managed_gpu "$idx" || continue
         printf "  GPU%s  %s  실사용 %5.1f / %.0f GiB  → 새 모델용 여유 약 %.1f GiB\n" \
             "$idx" "$name" "$(bc -l <<<"$used/1024")" "$(bc -l <<<"$total/1024")" "$(bc -l <<<"$(gpu_free_mib "$idx")/1024")"
     done < <(nvidia-smi --query-gpu=index,memory.used,memory.total,name --format=csv,noheader,nounits)
@@ -155,6 +180,11 @@ cmd_up() {
     local ngpu; ngpu=$(config_gpus "$cfg")
     [[ -z "$gpus" ]] || [[ "$gpus" =~ ^[0-9]+(,[0-9]+)*$ ]] || die "GPU 지정 형식이 잘못됐습니다: $gpus (예: 0 또는 0,1)"
     [[ -n "$gpus" ]] && ngpu=$(awk -F, '{print NF}' <<<"$gpus")
+    local g
+    for g in ${gpus//,/ }; do
+        is_managed_gpu "$g" || die "GPU$g 는 사용하도록 설정되지 않았습니다 (vllm.env 의 GPU_COUNT/GPU_IDS, 사용 가능: $(gpu_ids | paste -sd, -))"
+    done
+    (( ngpu <= $(gpu_count) )) || die "이 모델은 GPU ${ngpu}장이 필요하지만 사용 가능한 GPU 는 $(gpu_count)장입니다 (vllm.env 의 GPU_COUNT/GPU_IDS)"
 
     # 필요 메모리 계산
     plan "$cfg" "$ngpu"
@@ -162,7 +192,7 @@ cmd_up() {
 
     # GPU 자동 선택: 새 모델용 여유가 큰 순서로 ngpu 장
     if [[ -z "$gpus" ]]; then
-        gpus=$(for g in $(nvidia-smi --query-gpu=index --format=csv,noheader); do echo "$g $(gpu_free_mib "$g")"; done \
+        gpus=$(for g in $(gpu_ids); do echo "$g $(gpu_free_mib "$g")"; done \
             | sort -k2 -nr | head -n "$ngpu" | awk '{print $1}' | sort -n | paste -sd, -)
     fi
     local tp="$ngpu" name="vllm-$model-g${gpus//,/-}"
@@ -171,7 +201,7 @@ cmd_up() {
     [[ -n "$old" ]] || old="$name"
 
     # 용량 검사: 하나라도 모자라면 아무것도 건드리지 않고 거부
-    local g free short=0
+    local free short=0
     for g in ${gpus//,/ }; do
         free=$(gpu_free_mib "$g" "$old")
         if (( PLAN_NEED_MIB > free )); then
@@ -302,9 +332,9 @@ write_config() {
     local dir="$MODELS_DIR/${repo//\//__}" model_ref="$repo" mdir=""
     [[ -d "$dir" ]] && { model_ref="/models/${repo//\//__}"; mdir="$dir"; }
     local gpu_gib
-    gpu_gib=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -1 | awk '{print $1/1024}')
+    gpu_gib=$(gpu_total_mib | awk '{print $1/1024}')
 
-    python3 "$ROOT/lib/gen-config.py" "$repo" "$mdir" "$model_ref" "$gpu_gib" >"$f.tmp" && mv "$f.tmp" "$f" \
+    python3 "$ROOT/lib/gen-config.py" "$repo" "$mdir" "$model_ref" "$gpu_gib" "$(gpu_count)" >"$f.tmp" && mv "$f.tmp" "$f" \
         || { rm -f "$f.tmp"; die "설정 파일 생성 실패"; }
     echo "✅ 설정 파일 생성: $f"
     echo "------------------------------------------------------------"
@@ -321,8 +351,8 @@ fit_check() {
     local repo="$1" tmp total ngpu cap n1 d1 nn dn
     tmp=$(mktemp --suffix=.yaml)
     printf 'model: %s\nmax-model-len: 4096\n# concurrency: 1\n' "$repo" >"$tmp"
-    total=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -1)
-    ngpu=$(nvidia-smi -L | wc -l)
+    total=$(gpu_total_mib)
+    ngpu=$(gpu_count)
     cap=$(( total - SAFETY_MIB ))
     plan "$tmp" 1;       n1=$PLAN_NEED_MIB; d1=$PLAN_DESC
     plan "$tmp" "$ngpu"; nn=$PLAN_NEED_MIB; dn=$PLAN_DESC

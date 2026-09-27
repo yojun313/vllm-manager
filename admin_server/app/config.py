@@ -36,3 +36,14 @@ def _read_env_file(path: Path) -> dict:
 
 VLLM_ENV = _read_env_file(VLLM_ROOT / "vllm.env")
 SAFETY_MIB = int(VLLM_ENV.get("SAFETY_MIB", "2048"))
+
+
+def managed_gpu_ids(detected: list[str]) -> list[str]:
+    """vllm.env 의 GPU_IDS > GPU_COUNT > 감지된 전체 (./vllm 의 gpu_ids 와 같은 규칙)"""
+    ids = VLLM_ENV.get("GPU_IDS", "").strip()
+    count = VLLM_ENV.get("GPU_COUNT", "").strip()
+    if ids:
+        return [g for g in (x.strip() for x in ids.split(",")) if g in detected]
+    if count.isdigit() and int(count) > 0:
+        return detected[:int(count)]
+    return detected

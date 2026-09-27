@@ -3,7 +3,7 @@ CLI(./vllm ps, up 의 용량 검사)와 숫자가 항상 같게 한다."""
 
 import importlib.util
 
-from app.config import LIB_DIR, SAFETY_MIB
+from app.config import LIB_DIR, SAFETY_MIB, managed_gpu_ids
 from app.services import docker
 
 _spec = importlib.util.spec_from_file_location("gpufree", LIB_DIR / "gpufree.py")
@@ -14,6 +14,9 @@ _spec.loader.exec_module(gpufree)
 def snapshot() -> list[dict]:
     containers = docker.list_containers()
     gpus = gpufree.gpu_usage([(c["name"], c["gpus"], c["mem"], c["id"]) for c in containers], "-", SAFETY_MIB)
+    # vllm.env 의 GPU_COUNT / GPU_IDS 로 정한 GPU 만 보여주고 선택지로 쓴다
+    allowed = set(managed_gpu_ids([g["idx"] for g in gpus]))
+    gpus = [g for g in gpus if g["idx"] in allowed]
     extra = {row[0]: row for row in gpufree.smi("index,utilization.gpu,temperature.gpu,power.draw,power.limit")}
     name_to_model = {c["name"]: c["model"] for c in containers}
     for g in gpus:
