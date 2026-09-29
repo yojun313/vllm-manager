@@ -9,24 +9,24 @@ CONFIG_DIR="$ROOT/models"
 LABEL=vllm-serve.gpus
 
 set -a
-# shellcheck source=vllm.env
-source "$ROOT/vllm.env"
+# shellcheck source=.env
+source "$ROOT/.env"
 set +a
 
 DRY_RUN=0
 
-# 이 도구가 쓰는 GPU 번호 목록 (vllm.env 의 GPU_IDS > GPU_COUNT > 감지된 전체)
+# 이 도구가 쓰는 GPU 번호 목록 (.env 의 GPU_IDS > GPU_COUNT > 감지된 전체)
 gpu_ids() {
     if [[ -z "${_GPU_IDS:-}" ]]; then
         local all; all=$(nvidia-smi --query-gpu=index --format=csv,noheader | tr -d ' ')
         if [[ -n "${GPU_IDS:-}" ]]; then
             local g
             for g in ${GPU_IDS//,/ }; do
-                grep -qx "$g" <<<"$all" || { echo "❌ vllm.env 의 GPU_IDS 에 없는 GPU 번호가 있습니다: $g (감지된 GPU: $(paste -sd, <<<"$all"))" >&2; exit 1; }
+                grep -qx "$g" <<<"$all" || { echo "❌ .env 의 GPU_IDS 에 없는 GPU 번호가 있습니다: $g (감지된 GPU: $(paste -sd, <<<"$all"))" >&2; exit 1; }
             done
             _GPU_IDS=$(tr ',' '\n' <<<"$GPU_IDS" | sed '/^$/d')
         elif [[ -n "${GPU_COUNT:-}" ]]; then
-            [[ "$GPU_COUNT" =~ ^[1-9][0-9]*$ ]] || { echo "❌ vllm.env 의 GPU_COUNT 가 올바르지 않습니다: $GPU_COUNT" >&2; exit 1; }
+            [[ "$GPU_COUNT" =~ ^[1-9][0-9]*$ ]] || { echo "❌ .env 의 GPU_COUNT 가 올바르지 않습니다: $GPU_COUNT" >&2; exit 1; }
             _GPU_IDS=$(head -n "$GPU_COUNT" <<<"$all")
         else
             _GPU_IDS=$all
@@ -128,7 +128,7 @@ ensure_image() {
     (( DRY_RUN )) && return 0
     docker_ image inspect "$VLLM_IMAGE" >/dev/null 2>&1 && return 0
     info "이미지 다운로드 중: $VLLM_IMAGE (처음 한 번만, 수 분 소요)"
-    docker_ pull "$VLLM_IMAGE" || die "이미지를 받지 못했습니다. vllm.env 의 VLLM_IMAGE 태그를 확인하세요."
+    docker_ pull "$VLLM_IMAGE" || die "이미지를 받지 못했습니다. .env 의 VLLM_IMAGE 태그를 확인하세요."
 }
 
 show_gpus() {
@@ -182,9 +182,9 @@ cmd_up() {
     [[ -n "$gpus" ]] && ngpu=$(awk -F, '{print NF}' <<<"$gpus")
     local g
     for g in ${gpus//,/ }; do
-        is_managed_gpu "$g" || die "GPU$g 는 사용하도록 설정되지 않았습니다 (vllm.env 의 GPU_COUNT/GPU_IDS, 사용 가능: $(gpu_ids | paste -sd, -))"
+        is_managed_gpu "$g" || die "GPU$g 는 사용하도록 설정되지 않았습니다 (.env 의 GPU_COUNT/GPU_IDS, 사용 가능: $(gpu_ids | paste -sd, -))"
     done
-    (( ngpu <= $(gpu_count) )) || die "이 모델은 GPU ${ngpu}장이 필요하지만 사용 가능한 GPU 는 $(gpu_count)장입니다 (vllm.env 의 GPU_COUNT/GPU_IDS)"
+    (( ngpu <= $(gpu_count) )) || die "이 모델은 GPU ${ngpu}장이 필요하지만 사용 가능한 GPU 는 $(gpu_count)장입니다 (.env 의 GPU_COUNT/GPU_IDS)"
 
     # 필요 메모리 계산
     plan "$cfg" "$ngpu"

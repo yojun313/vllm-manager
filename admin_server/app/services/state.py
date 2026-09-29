@@ -3,7 +3,7 @@
 import asyncio
 import time
 
-from app.config import API_KEY_FILE, VLLM_ENV
+from app.config import API_KEY_FILE, MODEL_PUBLIC_URLS, VLLM_ENV
 from app.services import docker, download, gpu, jobs, models, progress
 
 _progress_cache: dict[str, tuple[float, dict]] = {}
@@ -60,6 +60,7 @@ async def _build() -> dict:
 
     async def enrich(c):
         c = dict(c)
+        c["public_url"] = MODEL_PUBLIC_URLS.get(str(c["port"]), "")
         c["health"] = await asyncio.to_thread(docker.healthy, c["port"]) if c["state"] == "running" else False
         c["progress"] = await asyncio.to_thread(_progress, c, c["health"])
         c["served"] = served.get(c["model"], c["model"])

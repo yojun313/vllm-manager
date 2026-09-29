@@ -1,4 +1,4 @@
-"""경로와 설정. 관리 서버 자체 설정은 admin_server/.env, vLLM 쪽 설정은 ../vllm.env 에서 읽는다."""
+"""경로와 설정. 관리 서버 자체 설정은 admin_server/.env, vLLM 쪽 설정은 루트 .env 에서 읽는다."""
 
 import os
 import re
@@ -19,6 +19,13 @@ if not ADMIN_USERNAME or not ADMIN_PASSWORD:
 SESSION_SECRET = os.getenv("SESSION_SECRET", "").strip() or os.urandom(32).hex()
 SESSION_DAYS = int(os.getenv("SESSION_DAYS", "14"))
 
+# 주소 복사에 사용할 포트별 외부 URL. 설정한 문자열 그대로 전달한다.
+MODEL_PUBLIC_URLS = {
+    key[len("MODEL_PUBLIC_URL_"):]: value.strip()
+    for key, value in os.environ.items()
+    if re.fullmatch(r"MODEL_PUBLIC_URL_\d+", key) and value.strip()
+}
+
 VLLM_BIN = VLLM_ROOT / "vllm"
 CONFIG_DIR = VLLM_ROOT / "models"
 LIB_DIR = VLLM_ROOT / "lib"
@@ -34,12 +41,12 @@ def _read_env_file(path: Path) -> dict:
     return env
 
 
-VLLM_ENV = _read_env_file(VLLM_ROOT / "vllm.env")
+VLLM_ENV = _read_env_file(VLLM_ROOT / ".env")
 SAFETY_MIB = int(VLLM_ENV.get("SAFETY_MIB", "2048"))
 
 
 def managed_gpu_ids(detected: list[str]) -> list[str]:
-    """vllm.env 의 GPU_IDS > GPU_COUNT > 감지된 전체 (./vllm 의 gpu_ids 와 같은 규칙)"""
+    """루트 .env 의 GPU_IDS > GPU_COUNT > 감지된 전체 (./vllm 의 gpu_ids 와 같은 규칙)"""
     ids = VLLM_ENV.get("GPU_IDS", "").strip()
     count = VLLM_ENV.get("GPU_COUNT", "").strip()
     if ids:

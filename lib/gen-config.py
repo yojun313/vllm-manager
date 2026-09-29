@@ -132,7 +132,7 @@ if not is_embed:
 out = [
     f"# gpus: {gpus}",
     f"# 자동 생성: {repo} ({model_type or '?'}, 가중치 {weight_bytes / 2**30:.1f} GiB)",
-    "# max-model-len: auto = KV 캐시가 AUTO_KV_GIB(vllm.env) 안에 들어가는 가장 긴 길이로 자동 결정. 숫자로 고정해도 됨",
+    "# max-model-len: auto = KV 캐시가 AUTO_KV_GIB(.env) 안에 들어가는 가장 긴 길이로 자동 결정. 숫자로 고정해도 됨",
     "# 필요한 GPU 메모리는 ./vllm 이 자동 계산 (./vllm ls 로 확인). 동시 요청 수를 바꾸려면: # concurrency: 8",
 ]
 if readme_len:

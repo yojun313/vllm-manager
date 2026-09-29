@@ -238,7 +238,7 @@
     if (!cs.length) html = '<div class="empty">실행 중인 모델이 없습니다. 아래 목록에서 켜보세요.</div>';
     else html = cs.map((c) => {
       const [k, t] = statusOf(c);
-      const url = `http://${location.hostname}:${c.port}/v1`;
+      const url = c.public_url || `http://${location.hostname}:${c.port}/v1`;
       const starting = c.state === 'running' && !c.health;
       return `<div class="card">
         <div class="rc-head"><span class="swatch" style="background:${colorOf(c.model)}"></span>
@@ -288,7 +288,7 @@
       let ok, msg;
       if (!opts.length) {
         ok = false;
-        msg = `GPU ${m.gpus}장이 필요하지만 사용 가능한 GPU 는 ${G.length}장입니다 (vllm.env 의 GPU_COUNT)`;
+        msg = `GPU ${m.gpus}장이 필요하지만 사용 가능한 GPU 는 ${G.length}장입니다 (루트 .env 의 GPU_COUNT)`;
       } else if (sel === 'auto') {
         ok = opts.some(fits);
         msg = ok ? `GPU ${ranked[0][0].join('+')} 에 들어갑니다 · 여유 ${gib(ranked[0][1])} GiB`

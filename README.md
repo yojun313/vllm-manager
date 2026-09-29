@@ -45,7 +45,9 @@ git clone git@github.com:yojun313/vllm-manager.git
 cd vllm-manager
 ```
 
-`vllm.env` 에서 다음 항목을 서버 환경에 맞게 확인합니다. 전체 항목은 [설정 레퍼런스](#설정-레퍼런스)를 참고하십시오.
+처음 설치할 때 `cp .env.example .env`로 루트 설정 파일을 만드세요. 이 `.env`에서 vLLM 실행 설정을 관리하며 Git에서 제외됩니다. `admin_server/.env`는 관리 화면 로그인 설정용입니다.
+
+루트 `.env` 에서 다음 항목을 서버 환경에 맞게 확인합니다. 전체 항목은 [설정 레퍼런스](#설정-레퍼런스)를 참고하십시오.
 
 - `VLLM_IMAGE`: GPU 드라이버가 지원하는 CUDA 버전의 이미지 태그
 - `MODELS_DIR`, `HF_CACHE_DIR`, `VLLM_CACHE_DIR`: 모델 가중치와 캐시를 저장할 경로
@@ -222,8 +224,11 @@ cp admin_server/.env.example admin_server/.env
 | `SESSION_DAYS` | 로그인 유지 기간(일) | `14` |
 | `PORT` | 웹 서버 포트 | `8000` |
 | `HOST` | 바인드 주소. `127.0.0.1` 로 지정하면 서버 내부에서만 접속할 수 있습니다. | `0.0.0.0` |
+| `MODEL_PUBLIC_URL_<포트>` | 해당 모델 포트의 주소 복사 값. 예: `MODEL_PUBLIC_URL_8000=llm0.knpu.re.kr/v1`, `MODEL_PUBLIC_URL_8001=llm1.knpu.re.kr/v1` | `http://현재호스트:포트/v1` |
 
-> **참고** `PORT` 의 기본값 8000 은 모델 서버의 기본 포트(`vllm.env` 의 `PORT_BASE`)와 같습니다. 같은 서버에서 모델도 실행한다면 `8021` 처럼 다른 포트를 지정하십시오.
+주소 복사 URL은 `admin_server/.env`에 설정한 문자열 그대로 사용합니다. 변경 후 관리 서버를 재시작하고 페이지를 새로고침하세요.
+
+> **참고** `PORT` 의 기본값 8000 은 모델 서버의 기본 포트(루트 `.env` 의 `PORT_BASE`)와 같습니다. 같은 서버에서 모델도 실행한다면 `8021` 처럼 다른 포트를 지정하십시오.
 
 ### 3. 실행
 
@@ -236,7 +241,7 @@ pm2 start ecosystem.config.js
 pm2 save
 ```
 
-`ecosystem.config.js` 는 `admin_server/app/`, `run.py`, `.env` 와 `vllm.env` 가 변경되면 웹 서버를 자동으로 재시작하도록 설정되어 있습니다. 웹 서버는 `vllm.env` 를 시작 시점에 읽으므로, pm2 없이 실행하는 경우 `vllm.env` 를 변경한 뒤 웹 서버를 재시작하십시오.
+`ecosystem.config.js` 는 `admin_server/app/`, `run.py`, `admin_server/.env` 와 루트 `.env` 가 변경되면 웹 서버를 자동으로 재시작하도록 설정되어 있습니다. pm2 없이 실행하는 경우 루트 `.env` 를 변경한 뒤 웹 서버를 재시작하십시오.
 
 > **중요** pm2 로 실행한 앱은 pm2 데몬의 권한을 그대로 사용합니다. `docker` 그룹에 추가하기 전부터 실행 중이던 pm2 데몬 아래에서는 웹 관리 콘솔도 docker 에 접근할 수 없습니다. 이 경우 pm2 데몬을 새 권한으로 다시 시작하십시오. pm2 로 실행 중인 다른 앱도 함께 재시작됩니다.
 >
@@ -257,7 +262,7 @@ docker 에 접근할 수 없으면 화면 상단에 안내가 표시되고 실�
 
 키는 이후 `./vllm up` 으로 실행하는 서버부터 적용됩니다. 클라이언트는 `Authorization: Bearer <키>` 헤더를 전송해야 합니다.
 
-> **보안 참고** vLLM 의 API 키 인증은 `/v1`, `/v2`, `/inference`, `/cohere` 경로에만 적용됩니다. `/invocations`, `/pooling`, `/score`, `/pause`, `/abort_requests` 등은 인증 없이 접근할 수 있습니다([vLLM 보안 문서](https://docs.vllm.ai/en/latest/usage/security.html#api-key-authentication-limitations)). 외부에 공개하는 경우 `vllm.env` 의 `BIND_ADDR` 를 `127.0.0.1` 로 지정하고, `/v1` 경로만 전달하는 리버스 프록시를 앞단에 두는 것을 권장합니다.
+> **보안 참고** vLLM 의 API 키 인증은 `/v1`, `/v2`, `/inference`, `/cohere` 경로에만 적용됩니다. `/invocations`, `/pooling`, `/score`, `/pause`, `/abort_requests` 등은 인증 없이 접근할 수 있습니다([vLLM 보안 문서](https://docs.vllm.ai/en/latest/usage/security.html#api-key-authentication-limitations)). 외부에 공개하는 경우 루트 `.env` 의 `BIND_ADDR` 를 `127.0.0.1` 로 지정하고, `/v1` 경로만 전달하는 리버스 프록시를 앞단에 두는 것을 권장합니다.
 
 ## 클라이언트 연결
 
@@ -301,7 +306,7 @@ Open WebUI 가 같은 서버의 docker 컨테이너에서 실행 중이면 `loca
 
 ## 설정 레퍼런스
 
-`vllm.env` 의 항목은 다음과 같습니다.
+루트 `.env` 의 항목은 다음과 같습니다.
 
 | 변수 | 설명 | 기본값 |
 |---|---|---|
@@ -321,7 +326,7 @@ Hugging Face 토큰(`~/.cache/huggingface/token`)이 있으면 컨테이너에 �
 
 ## vLLM 버전 관리
 
-vLLM 버전은 `vllm.env` 의 `VLLM_IMAGE` 로 고정합니다. `latest` 태그는 사용하지 않는 것을 권장합니다.
+vLLM 버전은 루트 `.env` 의 `VLLM_IMAGE` 로 고정합니다. `latest` 태그는 사용하지 않는 것을 권장합니다.
 
 이미지 태그는 GPU 드라이버가 지원하는 CUDA 버전과 일치해야 합니다. vLLM 의 기본 태그(`latest`, `v0.30.0` 등)는 CUDA 13 기반으로 드라이버 580 이상이 필요합니다. 드라이버 575(CUDA 12.9) 환경에서는 `-cu129` 로 끝나는 태그를 사용하십시오. 사용 가능한 태그는 [Docker Hub](https://hub.docker.com/r/vllm/vllm-openai/tags)에서 확인할 수 있습니다.
 
@@ -348,7 +353,8 @@ vLLM 버전은 `vllm.env` 의 `VLLM_IMAGE` 로 고정합니다. `latest` 태그�
 ```
 vllm-manager/
 ├── vllm                   # CLI
-├── vllm.env               # CLI 설정
+├── .env.example           # 루트 .env 설정 예시
+├── .env                   # vLLM 로컬 설정 (Git 제외)
 ├── ecosystem.config.js    # 웹 관리 콘솔 pm2 설정
 ├── lib/
 │   ├── plan.py            # 필요 메모리 산정
