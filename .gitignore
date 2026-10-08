@@ -1,4 +1,4 @@
-# 비밀값 (./vllm key new, admin_server/.env.example 참고)
+# 비밀값 (./vllm key new, server/.env.example 참고)
 api-key.env
 .env
 
@@ -10,7 +10,7 @@ models/*
 .venv/
 __pycache__/
 *.pyc
-admin_server/data/
+server/data/
 
 # 이 프로젝트와 무관한 개인 스크립트
 update_openwebui.sh

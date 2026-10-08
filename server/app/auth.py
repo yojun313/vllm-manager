@@ -6,6 +6,7 @@ WebSocket 은 미들웨어를 안 거치므로 ws_routes 에서 ws_authenticated
 
 import hmac
 import time
+from urllib.parse import urlsplit
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -33,7 +34,11 @@ def check_password(ip: str, username: str, password: str) -> bool:
     ok = hmac.compare_digest(username.encode(), ADMIN_USERNAME.encode()) & hmac.compare_digest(
         password.encode(), ADMIN_PASSWORD.encode())
     if not ok:
+        if ip not in _failures and len(_failures) >= 4096:
+            _failures.pop(next(iter(_failures)))
         _failures.setdefault(ip, []).append(time.time())
+    else:
+        _failures.pop(ip, None)
     return ok
 
 
@@ -54,7 +59,10 @@ def session_valid(token: str | None) -> bool:
 
 
 def ws_authenticated(ws: WebSocket) -> bool:
-    return session_valid(ws.cookies.get(COOKIE))
+    origin = ws.headers.get("origin")
+    host = ws.headers.get("host", "").lower()
+    origin_host = urlsplit(origin).netloc.lower() if origin else ""
+    return session_valid(ws.cookies.get(COOKIE)) and bool(origin_host) and origin_host == host
 
 
 class AuthMiddleware:
@@ -65,6 +73,15 @@ class AuthMiddleware:
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
         path = scope["path"]
+        if scope.get("method") not in {"GET", "HEAD", "OPTIONS", "TRACE"}:
+            headers = {k.lower(): v for k, v in scope.get("headers", [])}
+            fetch_site = headers.get(b"sec-fetch-site", b"").lower()
+            origin = headers.get(b"origin")
+            host = headers.get(b"host", b"").decode("latin-1").lower()
+            origin_host = urlsplit(origin.decode("latin-1")).netloc.lower() if origin else ""
+            if fetch_site == b"cross-site" or (origin and origin_host != host):
+                resp = JSONResponse({"detail": "요청 출처가 올바르지 않습니다"}, status_code=403)
+                return await resp(scope, receive, send)
         if path.startswith(PUBLIC_PREFIXES):
             return await self.app(scope, receive, send)
         cookies = {}

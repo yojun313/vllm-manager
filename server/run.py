@@ -1,4 +1,4 @@
-# admin_server/.venv/bin/python admin_server/run.py
+# uv run --project server python run.py
 # (어느 디렉터리에서 실행해도 되도록 이 파일 위치로 이동한 뒤 app.main:app 을 띄운다)
 
 import os

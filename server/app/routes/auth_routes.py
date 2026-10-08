@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.auth import COOKIE, check_password, issue_session, too_many_failures
-from app.config import SESSION_DAYS
+from app.config import COOKIE_SECURE, SESSION_DAYS
 
 router = APIRouter()
 
@@ -24,12 +24,13 @@ async def login(body: LoginBody, request: Request):
         await asyncio.sleep(1)  # 무차별 대입 속도 늦추기
         raise HTTPException(401, "아이디 또는 비밀번호가 올바르지 않습니다")
     resp = JSONResponse({"ok": True})
-    resp.set_cookie(COOKIE, issue_session(), httponly=True, samesite="lax", max_age=SESSION_DAYS * 86400)
+    resp.set_cookie(COOKIE, issue_session(), httponly=True, secure=COOKIE_SECURE,
+                    samesite="strict", max_age=SESSION_DAYS * 86400, path="/")
     return resp
 
 
 @router.post("/api/logout")
 async def logout():
     resp = JSONResponse({"ok": True})
-    resp.delete_cookie(COOKIE)
+    resp.delete_cookie(COOKIE, path="/", secure=COOKIE_SECURE, httponly=True, samesite="strict")
     return resp

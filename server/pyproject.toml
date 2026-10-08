@@ -1,0 +1,15 @@
+[project]
+name = "vllm-control-server"
+version = "0.1.0"
+description = "Web control panel for the local vLLM server"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "jinja2",
+    "python-dotenv",
+    "pyjwt",
+]
+
+[tool.uv]
+package = false

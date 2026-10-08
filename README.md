@@ -45,7 +45,7 @@ git clone git@github.com:yojun313/vllm-manager.git
 cd vllm-manager
 ```
 
-처음 설치할 때 `cp .env.example .env`로 루트 설정 파일을 만드세요. 이 `.env`에서 vLLM 실행 설정을 관리하며 Git에서 제외됩니다. `admin_server/.env`는 관리 화면 로그인 설정용입니다.
+처음 설치할 때 `cp .env.example .env`로 루트 설정 파일을 만드세요. 이 `.env`에서 vLLM 실행 설정을 관리하며 Git에서 제외됩니다. `server/.env`는 관리 화면 로그인 설정용입니다.
 
 루트 `.env` 에서 다음 항목을 서버 환경에 맞게 확인합니다. 전체 항목은 [설정 레퍼런스](#설정-레퍼런스)를 참고하십시오.
 
@@ -183,7 +183,7 @@ KV 캐시            = 토큰당 KV 크기 × max-model-len × 동시 요청 수
 
 ## 웹 관리 콘솔
 
-`admin_server/` 는 FastAPI 기반 웹 관리 콘솔입니다. 모든 작업은 `./vllm` 을 호출하여 수행되므로 CLI 와 동일한 규칙이 적용됩니다.
+`server/` 는 FastAPI 기반 웹 관리 콘솔입니다. 모든 작업은 `./vllm` 을 호출하여 수행되므로 CLI 와 동일한 규칙이 적용됩니다.
 
 **기능**
 
@@ -193,7 +193,7 @@ KV 캐시            = 토큰당 KV 크기 × max-model-len × 동시 요청 수
 - 모델 기동 진행률(가중치 로딩, 컴파일, CUDA graph 캡처 등 단계별)과 로그 실시간 표시
 - 아이디·비밀번호 로그인
 
-작업은 웹 서버와 분리된 프로세스에서 실행되며, 기록과 로그는 `admin_server/data/jobs/` 에 저장됩니다. 따라서 웹 서버가 재시작되어도 진행 중인 다운로드와 기동은 중단되지 않으며, 모든 기기와 브라우저에서 같은 상태가 표시됩니다.
+작업은 웹 서버와 분리된 프로세스에서 실행되며, 기록과 로그는 `server/data/jobs/` 에 저장됩니다. 따라서 웹 서버가 재시작되어도 진행 중인 다운로드와 기동은 중단되지 않으며, 모든 기기와 브라우저에서 같은 상태가 표시됩니다.
 
 ### 1. Docker 권한 설정
 
@@ -208,40 +208,40 @@ sudo usermod -aG docker $USER
 ### 2. 가상 환경 및 계정 설정
 
 ```bash
-uv venv admin_server/.venv --python 3.12
-uv pip install --python admin_server/.venv/bin/python -r admin_server/requirements.txt
+uv sync --project server --python 3.12
 
-cp admin_server/.env.example admin_server/.env
+cp server/.env.example server/.env
 ```
 
-`admin_server/.env` 에 로그인 계정과 세션 키를 설정합니다.
+`server/.env` 에 로그인 계정과 세션 키를 설정합니다. 외부에서 HTTPS 프록시를 통해 접속하면 세션 쿠키에 `Secure`가 적용됩니다. 관리 서버는 HTTPS 프록시 뒤에서만 외부에 공개하세요.
 
 | 변수 | 설명 | 기본값 |
 |---|---|---|
 | `ADMIN_USERNAME` | 로그인 아이디 | (필수) |
-| `ADMIN_PASSWORD` | 로그인 비밀번호 | (필수) |
-| `SESSION_SECRET` | 세션 쿠키 서명 키. 비워두면 서버가 재시작될 때마다 로그아웃됩니다. `python3 -c "import secrets; print(secrets.token_hex(32))"` 로 생성할 수 있습니다. | 무작위 |
+| `ADMIN_PASSWORD` | 강한 로그인 비밀번호 | (필수) |
+| `SESSION_SECRET` | 재시작 후에도 세션을 유지할 서명 키. `python3 -c "import secrets; print(secrets.token_hex(32))"` 로 생성하세요. 비워두면 재시작 때마다 로그아웃됩니다. | 무작위 |
 | `SESSION_DAYS` | 로그인 유지 기간(일) | `14` |
+| `COOKIE_SECURE` | 세션 쿠키를 HTTPS 연결에서만 전송. 로컬 HTTP 개발에서만 `false`로 설정하세요. | `true` |
 | `PORT` | 웹 서버 포트 | `8000` |
 | `HOST` | 바인드 주소. `127.0.0.1` 로 지정하면 서버 내부에서만 접속할 수 있습니다. | `0.0.0.0` |
 | `MODEL_PUBLIC_URL_<포트>` | 해당 모델 포트의 주소 복사 값. 예: `MODEL_PUBLIC_URL_8000=llm0.knpu.re.kr/v1`, `MODEL_PUBLIC_URL_8001=llm1.knpu.re.kr/v1` | `http://현재호스트:포트/v1` |
 
-주소 복사 URL은 `admin_server/.env`에 설정한 문자열 그대로 사용합니다. 변경 후 관리 서버를 재시작하고 페이지를 새로고침하세요.
+주소 복사 URL은 `server/.env`에 설정한 문자열 그대로 사용합니다. 변경 후 관리 서버를 재시작하고 페이지를 새로고침하세요.
 
-> **참고** `PORT` 의 기본값 8000 은 모델 서버의 기본 포트(루트 `.env` 의 `PORT_BASE`)와 같습니다. 같은 서버에서 모델도 실행한다면 `8021` 처럼 다른 포트를 지정하십시오.
+> **참고** `PORT` 의 기본값 8000 은 모델 서버의 기본 포트(루트 `.env` 의 `PORT_BASE`)와 같습니다. 같은 서버에서 모델도 실행한다면 `8021` 처럼 다른 포트를 지정하십시오. FastAPI Swagger UI(`/docs`), ReDoc(`/redoc`), OpenAPI 스키마(`/openapi.json`)는 비활성화되어 있습니다.
 
 ### 3. 실행
 
 ```bash
 # 포그라운드 실행
-admin_server/.venv/bin/python admin_server/run.py
+uv run --project server python server/run.py
 
 # pm2 로 상시 실행
 pm2 start ecosystem.config.js
 pm2 save
 ```
 
-`ecosystem.config.js` 는 `admin_server/app/`, `run.py`, `admin_server/.env` 와 루트 `.env` 가 변경되면 웹 서버를 자동으로 재시작하도록 설정되어 있습니다. pm2 없이 실행하는 경우 루트 `.env` 를 변경한 뒤 웹 서버를 재시작하십시오.
+`ecosystem.config.js` 는 `server/app/`, `run.py`, `server/.env` 와 루트 `.env` 가 변경되면 웹 서버를 자동으로 재시작하도록 설정되어 있습니다. pm2 없이 실행하는 경우 루트 `.env` 를 변경한 뒤 웹 서버를 재시작하십시오.
 
 > **중요** pm2 로 실행한 앱은 pm2 데몬의 권한을 그대로 사용합니다. `docker` 그룹에 추가하기 전부터 실행 중이던 pm2 데몬 아래에서는 웹 관리 콘솔도 docker 에 접근할 수 없습니다. 이 경우 pm2 데몬을 새 권한으로 다시 시작하십시오. pm2 로 실행 중인 다른 앱도 함께 재시작됩니다.
 >
@@ -335,7 +335,7 @@ vLLM 버전은 루트 `.env` 의 `VLLM_IMAGE` 로 고정합니다. `latest` 태�
 | `v0.29.0-cu129` | 권장 (현재 기본값) |
 | `v0.30.0-cu129` | 사용 불가. 이미지 내 torch(`2.14.0+cu130`)와 torchvision(`cu129`)의 버전 불일치로 기동에 실패합니다([vllm#56829](https://github.com/vllm-project/vllm/issues/56829)). |
 
-버전을 변경한 뒤에는 기동 진행률 표시(`admin_server/app/services/progress.py`)가 참조하는 로그 문구가 바뀌지 않았는지 확인하십시오.
+버전을 변경한 뒤에는 기동 진행률 표시(`server/app/services/progress.py`)가 참조하는 로그 문구가 바뀌지 않았는지 확인하십시오.
 
 ## 문제 해결
 
@@ -361,7 +361,7 @@ vllm-manager/
 │   ├── gpufree.py         # GPU별 여유 메모리 계산
 │   └── gen-config.py      # 모델 설정 파일 생성
 ├── models/                # 모델 설정 파일 (git 제외)
-└── admin_server/          # 웹 관리 콘솔 (FastAPI)
+└── server/                # 웹 관리 콘솔 (FastAPI, uv)
     ├── run.py
     ├── .env.example
     └── app/
@@ -371,4 +371,4 @@ vllm-manager/
         └── static/
 ```
 
-다음 파일은 저장소에 포함되지 않습니다: `models/*.yaml`, `api-key.env`, `admin_server/.env`, `admin_server/.venv/`, `admin_server/data/`.
+다음 파일은 저장소에 포함되지 않습니다: `models/*.yaml`, `api-key.env`, `.env`, `server/.env`, `server/.venv/`, `server/data/`.

@@ -1,4 +1,4 @@
-"""경로와 설정. 관리 서버 자체 설정은 admin_server/.env, vLLM 쪽 설정은 루트 .env 에서 읽는다."""
+"""경로와 설정. 관리 서버 자체 설정은 server/.env, vLLM 쪽 설정은 루트 .env 에서 읽는다."""
 
 import os
 import re
@@ -6,18 +6,19 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-SERVICE_DIR = Path(__file__).resolve().parent.parent  # admin_server/
+SERVICE_DIR = Path(__file__).resolve().parent.parent  # server/
 VLLM_ROOT = SERVICE_DIR.parent  # vllm/
 load_dotenv(SERVICE_DIR / ".env")
 
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "").strip()
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 if not ADMIN_USERNAME or not ADMIN_PASSWORD:
-    raise SystemExit("admin_server/.env 에 ADMIN_USERNAME, ADMIN_PASSWORD 를 설정하세요 (.env.example 참고)")
+    raise SystemExit("server/.env 에 ADMIN_USERNAME, ADMIN_PASSWORD 를 설정하세요 (.env.example 참고)")
 
 # 세션 서명 키. 비워두면 재시작할 때마다 새로 만들어져 모두 로그아웃된다.
 SESSION_SECRET = os.getenv("SESSION_SECRET", "").strip() or os.urandom(32).hex()
 SESSION_DAYS = int(os.getenv("SESSION_DAYS", "14"))
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "true").strip().lower() in {"1", "true", "yes", "on"}
 
 # 주소 복사에 사용할 포트별 외부 URL. 설정한 문자열 그대로 전달한다.
 MODEL_PUBLIC_URLS = {
