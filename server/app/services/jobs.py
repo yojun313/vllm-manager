@@ -69,7 +69,9 @@ class Job:
             return True
         # 좀비/재사용된 pid 방지: 시작 시각이 같은 프로세스인지 확인
         try:
-            return int(Path(f"/proc/{pid}/stat").read_text().split()[21]) == self.meta.get("pid_start")
+            return int(
+                Path(f"/proc/{pid}/stat").read_text().split()[21]
+            ) == self.meta.get("pid_start")
         except (OSError, IndexError, ValueError):
             return False
 
@@ -104,7 +106,11 @@ class Job:
             if not cuts:
                 break
             i = min(cuts)
-            sep, line, self._buf = self._buf[i:i + 1], self._buf[:i], self._buf[i + 1:]
+            sep, line, self._buf = (
+                self._buf[i : i + 1],
+                self._buf[:i],
+                self._buf[i + 1 :],
+            )
             text = line.decode("utf-8", "replace")
             m = _EXIT_RE.match(text.strip())
             if m:
@@ -126,7 +132,7 @@ class Job:
     def read(self, since: int) -> tuple[int, list[str]]:
         self.refresh()
         start = max(since, self.dropped)
-        return start, self.lines[start - self.dropped:]
+        return start, self.lines[start - self.dropped :]
 
     @property
     def total(self) -> int:
@@ -135,7 +141,9 @@ class Job:
     def launched(self) -> bool:
         """up: 용량 검사를 지나 docker run 까지 끝났는지 (./vllm 이 로그 스트리밍을 시작하면 그 뒤)"""
         self.refresh()
-        return self.status != "running" or any("로그 표시 중" in l for l in self.lines[-400:])
+        return self.status != "running" or any(
+            "로그 표시 중" in l for l in self.lines[-400:]
+        )
 
     def _save(self):
         tmp = DATA_DIR / f"{self.id}.json.tmp"
@@ -145,9 +153,17 @@ class Job:
     def summary(self) -> dict:
         status = self.status
         last = next((l for l in reversed(self.lines) if l.strip()), "")
-        return {"id": self.id, "kind": self.kind, "title": self.title, "target": self.target,
-                "status": status, "started": self.started, "ended": self.meta.get("ended"),
-                "last": last[-240:], "progress": self.meta.get("progress")}
+        return {
+            "id": self.id,
+            "kind": self.kind,
+            "title": self.title,
+            "target": self.target,
+            "status": status,
+            "started": self.started,
+            "ended": self.meta.get("ended"),
+            "last": last[-240:],
+            "progress": self.meta.get("progress"),
+        }
 
 
 # ---------------------------------------------------------------- 목록 (파일에서 복원)
@@ -193,14 +209,28 @@ def _spawn(job_id: int, args: list[str]) -> tuple[int, int]:
     log = DATA_DIR / f"{job_id}.log"
     pidfile = DATA_DIR / f"{job_id}.pid"
     cmd = " ".join(shlex.quote(a) for a in [str(VLLM_BIN), *args])
-    script = (f"( {cmd} </dev/null; echo \"{EXIT_MARK} $?\" ) >> {shlex.quote(str(log))} 2>&1 & "
-              f"echo $! > {shlex.quote(str(pidfile))}")
-    env = {**os.environ, "TERM": "dumb", "PYTHONUNBUFFERED": "1",
-           # docker 권한이 없을 때 ./vllm 이 sudo 로 넘어가 비밀번호를 기다리며 멈추지 않도록
-           "VLLM_NO_SUDO": "1",
-           "PATH": f"{Path.home() / '.local/bin'}:{os.environ.get('PATH', '')}"}
-    subprocess.run(["bash", "-c", script], cwd=VLLM_ROOT, env=env, start_new_session=True,
-                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    script = (
+        f'( {cmd} </dev/null; echo "{EXIT_MARK} $?" ) >> {shlex.quote(str(log))} 2>&1 & '
+        f"echo $! > {shlex.quote(str(pidfile))}"
+    )
+    env = {
+        **os.environ,
+        "TERM": "dumb",
+        "PYTHONUNBUFFERED": "1",
+        # docker 권한이 없을 때 ./vllm 이 sudo 로 넘어가 비밀번호를 기다리며 멈추지 않도록
+        "VLLM_NO_SUDO": "1",
+        "PATH": f"{Path.home() / '.local/bin'}:{os.environ.get('PATH', '')}",
+    }
+    subprocess.run(
+        ["bash", "-c", script],
+        cwd=VLLM_ROOT,
+        env=env,
+        start_new_session=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=True,
+    )
     pid = int(pidfile.read_text().strip())
     pidfile.unlink(missing_ok=True)
     try:
@@ -215,21 +245,42 @@ def _spawn(job_id: int, args: list[str]) -> tuple[int, int]:
 _start_lock = threading.Lock()
 
 
-def start(kind: str, title: str, args: list[str], target: str = "", extra: dict | None = None) -> Job:
+def start(
+    kind: str, title: str, args: list[str], target: str = "", extra: dict | None = None
+) -> Job:
     with _start_lock:
         if kind == "up":
-            pending = [j for j in all_jobs() if j.kind == "up" and j.status == "running" and not j.launched()]
+            pending = [
+                j
+                for j in all_jobs()
+                if j.kind == "up" and j.status == "running" and not j.launched()
+            ]
             if pending:
-                raise HTTPException(409, f"'{pending[0].title}' 가 용량 확인 중입니다. 몇 초 뒤 다시 시도하세요.")
+                raise HTTPException(
+                    409,
+                    f"'{pending[0].title}' 가 용량 확인 중입니다. 잠시 후 재시도가 가능합니다.",
+                )
         if kind in ("pull", "rm"):
-            dup = [j for j in all_jobs() if j.kind == kind and j.target == target and j.status == "running"]
+            dup = [
+                j
+                for j in all_jobs()
+                if j.kind == kind and j.target == target and j.status == "running"
+            ]
             if dup:
                 raise HTTPException(409, f"이미 진행 중입니다: {dup[0].title}")
         # 디스크 기준으로 번호를 매긴다 (다른 서버 인스턴스가 만든 작업과도 겹치지 않도록)
         on_disk = [int(p.stem) for p in DATA_DIR.glob("*.json") if p.stem.isdigit()]
         job_id = max([next(_ids), *[i + 1 for i in on_disk]])
-        meta = {"id": job_id, "kind": kind, "title": title, "target": target, "args": args,
-                "started": time.time(), "status": "running", **(extra or {})}
+        meta = {
+            "id": job_id,
+            "kind": kind,
+            "title": title,
+            "target": target,
+            "args": args,
+            "started": time.time(),
+            "status": "running",
+            **(extra or {}),
+        }
         (DATA_DIR / f"{job_id}.log").touch()
         meta["pid"], meta["pid_start"] = _spawn(job_id, args)
         job = Job(meta)

@@ -4,6 +4,7 @@
 사용: gen-config.py <HF repo id> <모델 폴더 또는 ""> <컨테이너 안 model 경로> <GPU 메모리 GiB> [사용 가능 GPU 수]
 결과 YAML 을 stdout 으로 출력한다. (호스트 python3.8 호환, 표준 라이브러리만 사용)
 """
+
 import json
 import math
 import os
@@ -11,14 +12,28 @@ import re
 import shlex
 import sys
 
-repo, model_dir, model_ref, gpu_gib = sys.argv[1], sys.argv[2], sys.argv[3], float(sys.argv[4])
+repo, model_dir, model_ref, gpu_gib = (
+    sys.argv[1],
+    sys.argv[2],
+    sys.argv[3],
+    float(sys.argv[4]),
+)
 max_gpus = int(sys.argv[5]) if len(sys.argv) > 5 else None
 
 # README 의 `vllm serve` 옵션 중 ./vllm 이 직접 관리하거나 여기서 쓸 수 없는 것
 SKIP = {
-    "port", "host", "tensor-parallel-size", "tp", "pipeline-parallel-size", "data-parallel-size",
-    "model", "served-model-name", "api-key", "max-model-len",
-    "reasoning-parser-plugin", "tool-parser-plugin",  # 모델 폴더의 .py 를 가리키는 로컬 경로라 대신 내장 파서를 쓴다
+    "port",
+    "host",
+    "tensor-parallel-size",
+    "tp",
+    "pipeline-parallel-size",
+    "data-parallel-size",
+    "model",
+    "served-model-name",
+    "api-key",
+    "max-model-len",
+    "reasoning-parser-plugin",
+    "tool-parser-plugin",  # 모델 폴더의 .py 를 가리키는 로컬 경로라 대신 내장 파서를 쓴다
 }
 
 # README 에 파서 지정이 없을 때 model_type 으로 채우는 기본값
@@ -33,7 +48,10 @@ FAMILY = {
     "qwen3_vl_moe": {"tool-call-parser": "hermes"},
     "qwen2_5_vl": {"tool-call-parser": "hermes"},
     "qwen2": {"tool-call-parser": "hermes"},
-    "nemotron_h": {"reasoning-parser": "nemotron_v3", "tool-call-parser": "qwen3_coder"},
+    "nemotron_h": {
+        "reasoning-parser": "nemotron_v3",
+        "tool-call-parser": "qwen3_coder",
+    },
     "llama": {"tool-call-parser": "llama3_json"},
 }
 
@@ -77,7 +95,13 @@ def yaml_scalar(v):
     if v is True:
         return "true"
     s = str(v)
-    if re.fullmatch(r"-?\d+(\.\d+)?|[A-Za-z0-9_./-]+", s) and s.lower() not in ("true", "false", "null", "yes", "no"):
+    if re.fullmatch(r"-?\d+(\.\d+)?|[A-Za-z0-9_./-]+", s) and s.lower() not in (
+        "true",
+        "false",
+        "null",
+        "yes",
+        "no",
+    ):
         return s
     return "'" + s.replace("'", "''") + "'"
 
@@ -94,20 +118,27 @@ archs = cfg.get("architectures") or []
 # vLLM 은 폴더 최상위의 가중치만 읽는다 (original/, metal/ 등 하위 폴더 제외)
 weight_bytes = 0
 if model_dir:
-    top = [f for f in os.listdir(model_dir) if os.path.isfile(os.path.join(model_dir, f))]
-    st = [f for f in top if f.endswith(".safetensors")] or [f for f in top if f.endswith(".bin")]
+    top = [
+        f for f in os.listdir(model_dir) if os.path.isfile(os.path.join(model_dir, f))
+    ]
+    st = [f for f in top if f.endswith(".safetensors")] or [
+        f for f in top if f.endswith(".bin")
+    ]
     weight_bytes = sum(os.path.getsize(os.path.join(model_dir, f)) for f in st)
 gpus = max(1, math.ceil(weight_bytes / 2**30 / (gpu_gib * 0.75))) if weight_bytes else 1
 if max_gpus:
-    gpus = min(gpus, max_gpus)  # 더 필요해도 사용 가능한 만큼만 (실행 시 용량 검사에서 판단)
+    gpus = min(
+        gpus, max_gpus
+    )  # 더 필요해도 사용 가능한 만큼만 (실행 시 용량 검사에서 판단)
 
 opts = {}
 flags = readme_flags()
 readme_len = flags.get("max-model-len")
 
 # 임베딩 모델: sentence-transformers 설정이 있거나, 아키텍처가 ...Model 로 끝나는 경우
-is_embed = (os.path.exists(os.path.join(model_dir, "modules.json"))
-            or any(a.endswith("Model") or "Embed" in a for a in archs))
+is_embed = os.path.exists(os.path.join(model_dir, "modules.json")) or any(
+    a.endswith("Model") or "Embed" in a for a in archs
+)
 if is_embed:
     opts["runner"] = "pooling"
 if "auto_map" in cfg or flags.get("trust-remote-code"):
@@ -138,7 +169,9 @@ out = [
 if readme_len:
     out.append(f"# 모델 카드 권장 max-model-len: {readme_len}")
 if flags:
-    out.append("# 모델 카드의 `vllm serve` 권장 옵션을 반영했습니다. 필요하면 수정하세요.")
+    out.append(
+        "# 모델 카드의 `vllm serve` 권장 옵션을 반영했습니다. 필요하면 수정하세요."
+    )
 out += [f"model: {model_ref}", f"served-model-name: {repo}"]
 out += [f"{k}: {yaml_scalar(v)}" for k, v in opts.items()]
 print("\n".join(out))

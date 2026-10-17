@@ -17,7 +17,10 @@ router = APIRouter(prefix="/api")
 def _require_docker():
     ok, err = docker.docker_ok()
     if not ok:
-        raise HTTPException(503, "docker 권한이 없습니다. 서버를 실행한 사용자를 docker 그룹에 추가하세요 (sudo usermod -aG docker $USER).")
+        raise HTTPException(
+            503,
+            "docker 권한이 없습니다. 서버 실행 계정을 docker 그룹에 추가해야 합니다 (sudo usermod -aG docker $USER).",
+        )
 
 
 class UpBody(BaseModel):
@@ -27,7 +30,9 @@ class UpBody(BaseModel):
 class PullBody(BaseModel):
     repo: str
     alias: str = ""
-    force: bool = False  # 이 서버 GPU 로 못 띄우는 모델이어도 받기 (화면에서 확인받은 뒤)
+    force: bool = (
+        False  # 이 서버 GPU 로 못 띄우는 모델이어도 받기 (화면에서 확인받은 뒤)
+    )
 
 
 def _clean_repo(repo: str) -> str:
@@ -68,12 +73,22 @@ def container_down(name: str):
 def pull_check(repo: str):
     """받기 전에 이 서버 GPU 로 띄울 수 있는지 (./vllm fit, HF 정보만 사용)"""
     repo = _clean_repo(repo)
-    r = subprocess.run([str(VLLM_BIN), "fit", repo, "--json"], cwd=VLLM_ROOT, capture_output=True, text=True,
-                       timeout=90, stdin=subprocess.DEVNULL)
+    r = subprocess.run(
+        [str(VLLM_BIN), "fit", repo, "--json"],
+        cwd=VLLM_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=90,
+        stdin=subprocess.DEVNULL,
+    )
     try:
         return {"repo": repo, **json.loads(r.stdout.strip().splitlines()[-1])}
     except (ValueError, IndexError):
-        return {"repo": repo, "fit": "unknown", "message": (r.stderr or r.stdout).strip()[-300:] or "계산 실패"}
+        return {
+            "repo": repo,
+            "fit": "unknown",
+            "message": (r.stderr or r.stdout).strip()[-300:] or "계산 실패",
+        }
 
 
 @router.post("/pull")
@@ -83,7 +98,11 @@ def pull(body: PullBody):
     if alias and not re.fullmatch(r"[a-z0-9][a-z0-9._-]*", alias):
         raise HTTPException(400, "별칭은 소문자, 숫자, . _ - 만 쓸 수 있습니다")
     state.invalidate()
-    args = ["pull", repo] + ([alias] if alias else []) + (["--force"] if body.force else [])
+    args = (
+        ["pull", repo]
+        + ([alias] if alias else [])
+        + (["--force"] if body.force else [])
+    )
     return jobs.start("pull", f"{repo} 다운로드", args, target=repo).summary()
 
 
@@ -92,9 +111,14 @@ def model_delete(alias: str, files: bool = False):
     _require_docker()  # 실행 중인지 확인하고, root 소유 파일은 docker 로 지우므로
     if not models.exists(alias):
         raise HTTPException(404, "없는 모델입니다")
-    running = [c["name"] for c in docker.list_containers(max_age=0) if c["model"] == alias]
+    running = [
+        c["name"] for c in docker.list_containers(max_age=0) if c["model"] == alias
+    ]
     if running:
-        raise HTTPException(409, f"실행 중인 모델은 지울 수 없습니다. 먼저 끄세요 ({', '.join(running)})")
+        raise HTTPException(
+            409,
+            f"실행 중인 모델은 지울 수 없습니다. 먼저 모델을 중지해야 합니다 ({', '.join(running)})",
+        )
     args = ["rm", alias] + (["--files"] if files else [])
     title = f"{alias} 삭제" + (" (가중치 포함)" if files else "")
     state.invalidate()

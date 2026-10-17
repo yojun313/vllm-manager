@@ -27,7 +27,9 @@ async def security_headers(request: Request, call_next):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
-    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    response.headers.setdefault(
+        "Permissions-Policy", "camera=(), microphone=(), geolocation=()"
+    )
     response.headers.setdefault(
         "Content-Security-Policy",
         "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
@@ -36,7 +38,9 @@ async def security_headers(request: Request, call_next):
     )
     response.headers.setdefault("Cache-Control", "no-store")
     if request.url.scheme == "https":
-        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+        )
     return response
 
 
@@ -45,15 +49,29 @@ class NoCacheStaticFiles(StaticFiles):
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         async def send_wrapper(message):
             if message["type"] == "http.response.start":
-                message = {**message, "headers": [*message.get("headers", []),
-                                                  (b"cache-control", b"no-store, must-revalidate")]}
+                message = {
+                    **message,
+                    "headers": [
+                        *message.get("headers", []),
+                        (b"cache-control", b"no-store, must-revalidate"),
+                    ],
+                }
             await send(message)
 
         await super().__call__(scope, receive, send_wrapper)
 
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
-app.mount("/js", NoCacheStaticFiles(directory=os.path.join(STATIC_DIR, "js")), name="js")
-app.mount("/css", NoCacheStaticFiles(directory=os.path.join(STATIC_DIR, "css")), name="css")
+app.mount(
+    "/js", NoCacheStaticFiles(directory=os.path.join(STATIC_DIR, "js")), name="js"
+)
+app.mount(
+    "/css", NoCacheStaticFiles(directory=os.path.join(STATIC_DIR, "css")), name="css"
+)
+app.mount(
+    "/icons",
+    NoCacheStaticFiles(directory=os.path.join(STATIC_DIR, "icons")),
+    name="icons",
+)
 
 app.include_router(api_router)

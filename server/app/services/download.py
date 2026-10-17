@@ -38,8 +38,11 @@ def total_bytes(repo: str) -> int:
     try:
         with urllib.request.urlopen(req, timeout=15) as r:
             info = json.loads(r.read())
-        total = sum((s.get("size") or 0) for s in info.get("siblings", [])
-                    if not s["rfilename"].startswith(EXCLUDE_DIRS))
+        total = sum(
+            (s.get("size") or 0)
+            for s in info.get("siblings", [])
+            if not s["rfilename"].startswith(EXCLUDE_DIRS)
+        )
     except Exception:
         total = 0
     _totals[repo] = (time.time(), total)
@@ -54,7 +57,9 @@ def local_bytes(d: Path) -> int:
         rel = os.path.relpath(root, d)
         if rel.startswith(".cache"):
             # 받는 중인 파일은 .cache/huggingface/download/*.incomplete 에 있다
-            total += sum(_size(Path(root) / f) for f in files if f.endswith(".incomplete"))
+            total += sum(
+                _size(Path(root) / f) for f in files if f.endswith(".incomplete")
+            )
             continue
         if (rel + "/").startswith(EXCLUDE_DIRS):
             dirs[:] = []
@@ -81,7 +86,16 @@ def progress(job_id: int, repo: str, finished: bool) -> dict:
         speed = max(0.0, (s[-1][1] - s[0][1]) / (s[-1][0] - s[0][0]))
     if finished:
         _samples.pop(job_id, None)
-    pct = 100.0 if finished and total == 0 else (min(done / total * 100, 100.0) if total else None)
+    pct = (
+        100.0
+        if finished and total == 0
+        else (min(done / total * 100, 100.0) if total else None)
+    )
     eta = (total - done) / speed if speed > 0 and total > done else None
-    return {"done": done, "total": total, "pct": round(pct, 1) if pct is not None else None,
-            "speed": round(speed), "eta": round(eta) if eta is not None else None}
+    return {
+        "done": done,
+        "total": total,
+        "pct": round(pct, 1) if pct is not None else None,
+        "speed": round(speed),
+        "eta": round(eta) if eta is not None else None,
+    }

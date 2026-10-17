@@ -10,23 +10,37 @@ GPU 사용량 = nvidia-smi 실사용량에서, 우리가 띄운 컨테이너 몫
 → 아직 로딩 중이라 메모리를 덜 잡은 모델도 예약량만큼 차지한 것으로 보고,
   다른 사람 프로세스나 예약 라벨 없는 예전 컨테이너는 실사용량 그대로 반영된다.
 """
+
 import re
 import subprocess
 import sys
 
 
 def smi(query, kind="gpu"):
-    out = subprocess.run(["nvidia-smi", f"--query-{kind}={query}", "--format=csv,noheader,nounits"],
-                         capture_output=True, text=True).stdout
-    return [[x.strip() for x in line.split(",")] for line in out.strip().splitlines() if line.strip()]
+    out = subprocess.run(
+        ["nvidia-smi", f"--query-{kind}={query}", "--format=csv,noheader,nounits"],
+        capture_output=True,
+        text=True,
+    ).stdout
+    return [
+        [x.strip() for x in line.split(",")]
+        for line in out.strip().splitlines()
+        if line.strip()
+    ]
 
 
 def gpu_usage(containers, skip="-", safety=0):
     """containers: [(이름, "0,1", 예약MiB 또는 None, 짧은ID)]
     반환: [{idx, name, total, used, other, ours: {이름: MiB}, free_new}]  (단위 MiB)"""
-    gpus = {g[1]: {"idx": g[0], "name": g[4], "total": int(g[2]), "used": int(g[3])}
-            for g in smi("index,uuid,memory.total,memory.used,name")}
-    ours = {cid[:12]: (name, cgpus.split(","), mem) for name, cgpus, mem, cid in containers if cid}
+    gpus = {
+        g[1]: {"idx": g[0], "name": g[4], "total": int(g[2]), "used": int(g[3])}
+        for g in smi("index,uuid,memory.total,memory.used,name")
+    }
+    ours = {
+        cid[:12]: (name, cgpus.split(","), mem)
+        for name, cgpus, mem, cid in containers
+        if cid
+    }
 
     # GPU 프로세스 → 컨테이너 (cgroup 경로의 64자리 컨테이너 ID)
     actual = {}  # (container id, gpu idx) → MiB
@@ -50,8 +64,14 @@ def gpu_usage(containers, skip="-", safety=0):
             if name != skip:
                 mine[name] = max(real, mem or 0)
         other = max(other, 0)
-        result.append({**g, "other": other, "ours": mine,
-                       "free_new": g["total"] - other - sum(mine.values()) - safety})
+        result.append(
+            {
+                **g,
+                "other": other,
+                "ours": mine,
+                "free_new": g["total"] - other - sum(mine.values()) - safety,
+            }
+        )
     return result
 
 

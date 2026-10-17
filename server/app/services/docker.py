@@ -9,11 +9,19 @@ import urllib.request
 from datetime import datetime
 
 LABEL = "vllm-serve"
-_FMT = "\t".join([
-    "{{.Names}}", f'{{{{.Label "{LABEL}.gpus"}}}}', f'{{{{.Label "{LABEL}.model"}}}}',
-    f'{{{{.Label "{LABEL}.port"}}}}', f'{{{{.Label "{LABEL}.mem"}}}}', "{{.Status}}", "{{.ID}}", "{{.State}}",
-    "{{.CreatedAt}}",
-])
+_FMT = "\t".join(
+    [
+        "{{.Names}}",
+        f'{{{{.Label "{LABEL}.gpus"}}}}',
+        f'{{{{.Label "{LABEL}.model"}}}}',
+        f'{{{{.Label "{LABEL}.port"}}}}',
+        f'{{{{.Label "{LABEL}.mem"}}}}',
+        "{{.Status}}",
+        "{{.ID}}",
+        "{{.State}}",
+        "{{.CreatedAt}}",
+    ]
+)
 
 _cache = {"at": 0.0, "value": []}
 
@@ -41,9 +49,19 @@ def list_containers(max_age: float = 1.0) -> list[dict]:
         f = line.split("\t")
         if len(f) < 9:
             continue
-        out.append({"name": f[0], "gpus": f[1], "model": f[2], "port": f[3],
-                    "mem": int(f[4]) if f[4].isdigit() else None,
-                    "status": f[5], "id": f[6], "state": f[7], "created": _epoch(f[8])})
+        out.append(
+            {
+                "name": f[0],
+                "gpus": f[1],
+                "model": f[2],
+                "port": f[3],
+                "mem": int(f[4]) if f[4].isdigit() else None,
+                "status": f[5],
+                "id": f[6],
+                "state": f[7],
+                "created": _epoch(f[8]),
+            }
+        )
     _cache.update(at=time.time(), value=out)
     return out
 

@@ -11,6 +11,7 @@ KV 캐시 = 토큰당 KV 바이트 × max-model-len × 동시 요청 수(KV_CONC
 vLLM 에는 --kv-cache-memory-bytes 로 KV 크기를 정확히 주고, 시작 시 여유 메모리 검사를 통과하도록
 --gpu-memory-utilization 을 필요량/전체 로 맞춘다. (호스트 python3.8 호환, 표준 라이브러리만 사용)
 """
+
 import glob
 import json
 import math
@@ -60,26 +61,43 @@ def hf_get(url):
 
 def weights_in(files_sizes):
     st = [s for f, s in files_sizes if "/" not in f and f.endswith(".safetensors")]
-    return sum(st) if st else sum(s for f, s in files_sizes if "/" not in f and f.endswith(".bin"))
+    return (
+        sum(st)
+        if st
+        else sum(s for f, s in files_sizes if "/" not in f and f.endswith(".bin"))
+    )
 
 
 config, weights, source = None, 0, ""
 if model.startswith("/models/"):
-    d = os.path.join(models_dir, model[len("/models/"):])
+    d = os.path.join(models_dir, model[len("/models/") :])
     snaps = [d]
 else:
-    snaps = sorted(glob.glob(os.path.join(hf_cache, "hub", "models--" + model.replace("/", "--"), "snapshots", "*")))
+    snaps = sorted(
+        glob.glob(
+            os.path.join(
+                hf_cache, "hub", "models--" + model.replace("/", "--"), "snapshots", "*"
+            )
+        )
+    )
 for d in snaps:
     if os.path.exists(os.path.join(d, "config.json")):
         config = json.load(open(os.path.join(d, "config.json")))
-        weights = weights_in([(f, os.path.getsize(os.path.join(d, f))) for f in os.listdir(d)
-                              if os.path.isfile(os.path.join(d, f))])
+        weights = weights_in(
+            [
+                (f, os.path.getsize(os.path.join(d, f)))
+                for f in os.listdir(d)
+                if os.path.isfile(os.path.join(d, f))
+            ]
+        )
         source = "local"
 if config is None and "/" in model and not model.startswith("/"):
     try:
         config = hf_get(f"https://huggingface.co/{model}/resolve/main/config.json")
         info = hf_get(f"https://huggingface.co/api/models/{model}?blobs=true")
-        weights = weights_in([(s["rfilename"], s.get("size") or 0) for s in info.get("siblings", [])])
+        weights = weights_in(
+            [(s["rfilename"], s.get("size") or 0) for s in info.get("siblings", [])]
+        )
         source = "HF"
     except Exception:
         config = None
@@ -87,9 +105,17 @@ if config is None and "/" in model and not model.startswith("/"):
 # 수동 설정이 있으면 그대로 존중
 if "gpu-memory-utilization" in yml:
     util = float(yml["gpu-memory-utilization"])
-    emit(util * gpu_total, [], f"수동 설정 gpu-memory-utilization={util} → {util * gpu_total / GiB:.1f}GiB/GPU")
+    emit(
+        util * gpu_total,
+        [],
+        f"수동 설정 gpu-memory-utilization={util} → {util * gpu_total / GiB:.1f}GiB/GPU",
+    )
 if config is None or not weights:
-    emit(0.9 * gpu_total, [], "⚠️ 모델 정보를 못 읽어 자동 계산 불가 → vLLM 기본값(GPU 90%) 사용")
+    emit(
+        0.9 * gpu_total,
+        [],
+        "⚠️ 모델 정보를 못 읽어 자동 계산 불가 → vLLM 기본값(GPU 90%) 사용",
+    )
 
 # ---- 토큰당 KV 바이트 (GPU 당)
 c = {**config, **(config.get("text_config") or {}), **(config.get("llm_config") or {})}
@@ -100,7 +126,9 @@ head_dim = c.get("head_dim") or (c.get("hidden_size", 0) // heads)
 hybrid = False
 if c.get("layer_types"):
     # sliding window 레이어는 창 크기(수백 토큰)만 저장하므로 무시, linear/mamba 레이어는 KV 없음
-    attn_layers = sum(1 for t in c["layer_types"] if t in ("full_attention", "attention"))
+    attn_layers = sum(
+        1 for t in c["layer_types"] if t in ("full_attention", "attention")
+    )
     hybrid = any("linear" in t or "mamba" in t for t in c["layer_types"])
 elif c.get("hybrid_override_pattern"):  # Nemotron-H: '*' = attention, 'M' = mamba
     attn_layers = c["hybrid_override_pattern"].count("*")
@@ -117,7 +145,10 @@ if ml.isdigit():
     max_len = int(ml)
 else:
     cands = [l for l in (model_max, 131072, 65536, 32768) if l <= model_max]
-    max_len = next((l for l in cands if per_token * l * concurrency <= auto_kv), min(model_max, 32768))
+    max_len = next(
+        (l for l in cands if per_token * l * concurrency <= auto_kv),
+        min(model_max, 32768),
+    )
 
 kv = per_token * max_len * concurrency
 if hybrid:
@@ -127,9 +158,19 @@ multimodal = "vision_config" in config or "vision_config" in c
 overhead = 2.5 * GiB + 0.05 * w + (2 * GiB if multimodal else 0)
 need = w + kv + overhead
 
-util = min(0.97, math.ceil((need / gpu_total) * 100 + 1) / 100)  # 시작 시 여유 메모리 검사용
-args = ["--kv-cache-memory-bytes", str(int(kv)), "--gpu-memory-utilization", f"{util:.2f}",
-        "--max-model-len", str(max_len)]
-desc = (f"가중치 {w / GiB:.1f} + KV {kv / GiB:.1f} ({max_len:,}토큰 × 동시 {concurrency}) "
-        f"+ 여유 {overhead / GiB:.1f} = {need / GiB:.1f}GiB/GPU")
+util = min(
+    0.97, math.ceil((need / gpu_total) * 100 + 1) / 100
+)  # 시작 시 여유 메모리 검사용
+args = [
+    "--kv-cache-memory-bytes",
+    str(int(kv)),
+    "--gpu-memory-utilization",
+    f"{util:.2f}",
+    "--max-model-len",
+    str(max_len),
+]
+desc = (
+    f"가중치 {w / GiB:.1f} + KV {kv / GiB:.1f} ({max_len:,}토큰 × 동시 {concurrency}) "
+    f"+ 여유 {overhead / GiB:.1f} = {need / GiB:.1f}GiB/GPU"
+)
 emit(need, args, desc)

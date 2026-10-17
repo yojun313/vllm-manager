@@ -13,7 +13,13 @@ def _progress(c: dict, healthy: bool) -> dict:
     if healthy:
         return progress.parse("", healthy=True)
     if c["state"] != "running":
-        return {"key": "stopped", "stage": "중지됨", "pct": 0, "detail": c["status"], "error": ""}
+        return {
+            "key": "stopped",
+            "stage": "중지됨",
+            "pct": 0,
+            "detail": c["status"],
+            "error": "",
+        }
     hit = _progress_cache.get(c["name"])
     if hit and time.time() - hit[0] < 2:
         return hit[1]
@@ -26,8 +32,11 @@ def job_list() -> list[dict]:
     out = []
     for j in jobs.all_jobs():
         status = j.status
-        if j.kind == "pull" and (status == "running" or j.meta.get("progress") is None or
-                                 j.meta["progress"].get("final") is not True):
+        if j.kind == "pull" and (
+            status == "running"
+            or j.meta.get("progress") is None
+            or j.meta["progress"].get("final") is not True
+        ):
             p = download.progress(j.id, j.target, finished=status != "running")
             if status != "running":
                 p["final"] = True
@@ -61,7 +70,11 @@ async def _build() -> dict:
     async def enrich(c):
         c = dict(c)
         c["public_url"] = MODEL_PUBLIC_URLS.get(str(c["port"]), "")
-        c["health"] = await asyncio.to_thread(docker.healthy, c["port"]) if c["state"] == "running" else False
+        c["health"] = (
+            await asyncio.to_thread(docker.healthy, c["port"])
+            if c["state"] == "running"
+            else False
+        )
         c["progress"] = await asyncio.to_thread(_progress, c, c["health"])
         c["served"] = served.get(c["model"], c["model"])
         return c
@@ -71,7 +84,8 @@ async def _build() -> dict:
     total = gpus[0]["total"] if gpus else 81920
     return {
         "image": VLLM_ENV.get("VLLM_IMAGE", ""),
-        "docker_ok": ok, "docker_error": "" if ok else err,
+        "docker_ok": ok,
+        "docker_error": "" if ok else err,
         "containers": containers,
         "models": await asyncio.to_thread(models.list_models, total),
         "jobs": await asyncio.to_thread(job_list),

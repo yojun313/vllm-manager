@@ -13,16 +13,23 @@ load_dotenv(SERVICE_DIR / ".env")
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "").strip()
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 if not ADMIN_USERNAME or not ADMIN_PASSWORD:
-    raise SystemExit("server/.env 에 ADMIN_USERNAME, ADMIN_PASSWORD 를 설정하세요 (.env.example 참고)")
+    raise SystemExit(
+        "server/.env 에 ADMIN_USERNAME, ADMIN_PASSWORD 설정이 필요합니다 (.env.example 참고)"
+    )
 
 # 세션 서명 키. 비워두면 재시작할 때마다 새로 만들어져 모두 로그아웃된다.
 SESSION_SECRET = os.getenv("SESSION_SECRET", "").strip() or os.urandom(32).hex()
 SESSION_DAYS = int(os.getenv("SESSION_DAYS", "14"))
-COOKIE_SECURE = os.getenv("COOKIE_SECURE", "true").strip().lower() in {"1", "true", "yes", "on"}
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 # 주소 복사에 사용할 포트별 외부 URL. 설정한 문자열 그대로 전달한다.
 MODEL_PUBLIC_URLS = {
-    key[len("MODEL_PUBLIC_URL_"):]: value.strip()
+    key[len("MODEL_PUBLIC_URL_") :]: value.strip()
     for key, value in os.environ.items()
     if re.fullmatch(r"MODEL_PUBLIC_URL_\d+", key) and value.strip()
 }
@@ -53,5 +60,5 @@ def managed_gpu_ids(detected: list[str]) -> list[str]:
     if ids:
         return [g for g in (x.strip() for x in ids.split(",")) if g in detected]
     if count.isdigit() and int(count) > 0:
-        return detected[:int(count)]
+        return detected[: int(count)]
     return detected

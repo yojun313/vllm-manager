@@ -17,7 +17,7 @@
   let S = null;          // 마지막 state
   let G = [];            // 마지막 gpu
   const choice = {};     // 모델별 GPU 선택
-  let armed = null;      // '끄기' 두 번 눌러 확인
+  let armed = null;      // '중지' 두 번 눌러 확인
   const jobStatus = {};  // 작업 완료 토스트용
 
   /* ------------------------------------------------------------ 공통 */
@@ -77,11 +77,20 @@
   /* ------------------------------------------------------------ WebSocket */
   let ws = null, wsBackoff = 500, sub = { sub: null };
 
+  function configureStream() {
+    const p = window.VllmUI.preferences;
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify({ configure: {
+      gpu_interval: p.gpuInterval, state_interval: p.stateInterval, gpu_enabled: p.gpuEnabled,
+    } }));
+  }
+  window.addEventListener('vllm:preferences', configureStream);
+
   function connect() {
     ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
     ws.onopen = () => {
       wsBackoff = 500;
       setLive('ok', '실시간');
+      configureStream();
       ws.send(JSON.stringify({ ...sub, refresh: true }));
     };
     ws.onmessage = (ev) => {
@@ -124,7 +133,11 @@
 
   function renderGpus() {
     const wrap = $('#gpus');
-    if (wrap.querySelector('.skeleton')) wrap.innerHTML = '';
+    if (!G.length) {
+      wrap.innerHTML = '<div class="empty">표시할 GPU 정보가 없습니다.</div>';
+      return;
+    }
+    if (wrap.querySelector('.skeleton, .empty')) wrap.innerHTML = '';
     const names = Object.fromEntries((S?.containers || []).map((c) => [c.name, c.model]));
     G.forEach((g) => {
       const card = gpuCard(g.idx);
@@ -210,8 +223,8 @@
   function renderState() {
     $('#image').textContent = S.image;
     $('#banner').innerHTML = S.docker_ok ? '' : `<div class="banner"><b>docker 에 접근할 수 없습니다.</b>
-      이 관리 서버를 실행한 사용자에게 docker 권한이 없어요.<br>
-      <code>sudo usermod -aG docker $USER</code> 후 다시 로그인하고 서버를 재시작하세요.
+      관리 서버 실행 계정에 Docker 권한이 없습니다.<br>
+      <code>sudo usermod -aG docker $USER</code> 실행 후 재로그인과 서버 재시작이 필요합니다.
       <div class="mono" style="opacity:.7;margin-top:6px">${esc(S.docker_error)}</div></div>`;
     $('#connSec').hidden = !S.api_key;
     renderRunning();
@@ -235,7 +248,7 @@
     const cs = S.containers;
     $('#runCount').textContent = cs.length ? cs.length + '개' : '';
     let html;
-    if (!cs.length) html = '<div class="empty">실행 중인 모델이 없습니다. 아래 목록에서 켜보세요.</div>';
+    if (!cs.length) html = '<div class="empty">실행 중인 모델이 없습니다.</div>';
     else html = cs.map((c) => {
       const [k, t] = statusOf(c);
       const url = c.public_url || `http://${location.hostname}:${c.port}/v1`;
@@ -252,7 +265,7 @@
           <button class="btn sm" data-logs="${esc(c.name)}">${starting ? '실시간 로그' : '로그'}</button>
           <button class="btn sm" data-up="${esc(c.model)}" data-gpus="${esc(c.gpus)}">재시작</button>
           <span class="grow"></span>
-          <button class="btn sm danger ${armed === c.name ? 'armed' : ''}" data-stop="${esc(c.name)}">${armed === c.name ? '정말 끌까요?' : '끄기'}</button>
+          <button class="btn sm danger ${armed === c.name ? 'armed' : ''}" data-stop="${esc(c.name)}">${armed === c.name ? '중지 확인' : '중지'}</button>
         </div></div>`;
     }).join('');
     if (html !== lastRunHtml) { $('#running').innerHTML = html; lastRunHtml = html; }
@@ -278,8 +291,13 @@
 
   let lastLibHtml = '';
   function renderLibrary() {
-    if (!S || !G.length) return;
+    if (!S) return;
     $('#libCount').textContent = S.models.length + '개';
+    if (!S.models.length) {
+      lastLibHtml = '';
+      $('#library').innerHTML = '<div class="empty">등록된 모델이 없습니다.</div>';
+      return;
+    }
     const html = S.models.map((m) => {
       const opts = combos(m.gpus);
       const sel = choice[m.alias] ?? 'auto';
@@ -316,7 +334,7 @@
         <div class="seg">${seg}</div>
         <div class="fit ${ok ? 'ok' : 'bad'}">${esc(msg)}</div>
         <button class="btn primary" data-up="${esc(m.alias)}" data-gpus="${sel === 'auto' ? '' : esc(sel)}" ${ok && S.docker_ok ? '' : 'disabled'}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg>${replacing ? '재시작' : '켜기'}</button>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg>${replacing ? '재시작' : '실행'}</button>
       </div>`;
     }).join('');
     if (html !== lastLibHtml) { $('#library').innerHTML = html; lastLibHtml = html; }
@@ -476,7 +494,7 @@
     $('#delAlias2').textContent = m.alias;
     $('#delServed').textContent = m.served;
     $('#delRunning').hidden = !running.length;
-    $('#delRunning').textContent = running.length ? `실행 중입니다 (${running.map((c) => 'GPU ' + c.gpus).join(', ')}). 먼저 끄세요.` : '';
+    $('#delRunning').textContent = running.length ? `실행 중입니다 (${running.map((c) => 'GPU ' + c.gpus).join(', ')}). 먼저 모델을 중지해야 합니다.` : '';
     const canFiles = m.files_bytes > 0 && !m.files_shared.length;
     $('#delFiles').disabled = !canFiles;
     $('#delFilesRow').classList.toggle('disabled', !canFiles);
@@ -534,17 +552,17 @@
     const gpus = r.gpus || G.length;
     const html = r.fit === 'no'
       ? `<div class="fit-box no"><b>GPU ${gpus}장(${esc((G[0]?.name || 'GPU').replace('NVIDIA ', ''))})을 모두 써도 띄울 수 없는 모델입니다.</b><br>
-           가장 가볍게 띄워도(컨텍스트 4k, 동시 1) GPU 한 장에 들어가지 않아요.</div>
+           최소 구성(컨텍스트 4k, 동시 요청 1)에서도 GPU 한 장의 메모리를 초과합니다.</div>
          <dl class="fit-grid">
            <dt>모델</dt><dd>${esc(r.repo)}</dd>
            <dt>GPU ${gpus}장일 때 필요 (GPU당)</dt><dd class="bad">${gib(r.need_all_mib)} GiB</dd>
            <dt>GPU 한 장에 쓸 수 있는 양</dt><dd>${gib(r.cap_mib)} GiB</dd>
          </dl>
          <p class="dim small">${esc(r.message)}</p>
-         <p class="small">받아도 이 서버에서는 켤 수 없고 디스크만 차지합니다. 그래도 다운로드할까요?</p>`
+         <p class="small">이 서버에서는 실행할 수 없습니다. 다운로드를 계속하면 디스크 공간을 사용합니다.</p>`
       : `<div class="fit-box unknown"><b>필요한 메모리를 계산할 수 없습니다.</b><br>
-           HF 에서 config.json 이나 가중치(safetensors) 크기를 읽지 못했어요. GGUF 처럼 vLLM 이 잘 쓰지 않는 형식일 수 있습니다.</div>
-         <p class="dim small">${esc(r.message)}</p><p class="small">그래도 다운로드할까요?</p>`;
+           Hugging Face에서 config.json 또는 가중치 크기를 확인하지 못했습니다. vLLM에서 지원하지 않는 형식일 수 있습니다.</div>
+         <p class="dim small">${esc(r.message)}</p><p class="small">다운로드를 계속하려면 확인이 필요합니다.</p>`;
     const yes = await confirmDialog({ title: r.fit === 'no' ? '띄울 수 없는 모델' : '용량 확인 불가', html, ok: '그래도 다운로드' });
     return { go: yes, force: yes };
   }

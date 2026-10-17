@@ -13,19 +13,31 @@ _spec.loader.exec_module(gpufree)
 
 def snapshot() -> list[dict]:
     containers = docker.list_containers()
-    gpus = gpufree.gpu_usage([(c["name"], c["gpus"], c["mem"], c["id"]) for c in containers], "-", SAFETY_MIB)
+    gpus = gpufree.gpu_usage(
+        [(c["name"], c["gpus"], c["mem"], c["id"]) for c in containers], "-", SAFETY_MIB
+    )
     # 루트 .env 의 GPU_COUNT / GPU_IDS 로 정한 GPU 만 보여주고 선택지로 쓴다
     allowed = set(managed_gpu_ids([g["idx"] for g in gpus]))
     gpus = [g for g in gpus if g["idx"] in allowed]
-    extra = {row[0]: row for row in gpufree.smi("index,utilization.gpu,temperature.gpu,power.draw,power.limit")}
+    extra = {
+        row[0]: row
+        for row in gpufree.smi(
+            "index,utilization.gpu,temperature.gpu,power.draw,power.limit"
+        )
+    }
     name_to_model = {c["name"]: c["model"] for c in containers}
     for g in gpus:
-        idx, util, temp, power, limit = extra.get(g["idx"], [g["idx"], "0", "0", "0", "0"])
+        idx, util, temp, power, limit = extra.get(
+            g["idx"], [g["idx"], "0", "0", "0", "0"]
+        )
         g["util"] = _num(util)
         g["temp"] = _num(temp)
         g["power"] = _num(power)
         g["power_limit"] = _num(limit)
-        g["ours"] = [{"name": n, "model": name_to_model.get(n, n), "mib": m} for n, m in g["ours"].items()]
+        g["ours"] = [
+            {"name": n, "model": name_to_model.get(n, n), "mib": m}
+            for n, m in g["ours"].items()
+        ]
     return gpus
 
 

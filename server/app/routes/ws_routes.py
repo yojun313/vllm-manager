@@ -31,6 +31,7 @@ async def ws(ws: WebSocket):
     sub: dict = {"kind": None}
     send_lock = asyncio.Lock()
     log_task: asyncio.Task | None = None
+    intervals = {"gpu": 1, "state": 2, "gpu_enabled": True}
 
     async def send(msg: dict):
         async with send_lock:
@@ -38,12 +39,23 @@ async def ws(ws: WebSocket):
 
     async def stream_container_logs(name: str):
         proc = await asyncio.create_subprocess_exec(
-            "docker", "logs", "-f", "--tail", "400", name,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+            "docker",
+            "logs",
+            "-f",
+            "--tail",
+            "400",
+            name,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
 
         def last_segment(raw: bytes) -> str:
             # tqdm 진행률은 \r 로 같은 줄을 덮어쓰므로 마지막 조각만 보여준다
-            return raw.split(b"\r")[-1].decode("utf-8", "replace") if raw.strip(b"\r") else ""
+            return (
+                raw.split(b"\r")[-1].decode("utf-8", "replace")
+                if raw.strip(b"\r")
+                else ""
+            )
 
         try:
             await send({"type": "logs", "name": name, "reset": True, "lines": []})
@@ -60,8 +72,17 @@ async def ws(ws: WebSocket):
                     batch += [last_segment(d) for d in done]
                 # 아직 줄바꿈이 안 온 진행 중인 줄은 partial 로 보내 화면 마지막 줄을 계속 바꿔 끼운다
                 partial = last_segment(buf)
-                if (batch or partial != sent_partial) and (eof or time.monotonic() - last > 0.2 or len(batch) > 200):
-                    await send({"type": "logs", "name": name, "lines": batch, "partial": partial})
+                if (batch or partial != sent_partial) and (
+                    eof or time.monotonic() - last > 0.2 or len(batch) > 200
+                ):
+                    await send(
+                        {
+                            "type": "logs",
+                            "name": name,
+                            "lines": batch,
+                            "partial": partial,
+                        }
+                    )
                     batch, sent_partial, last = [], partial, time.monotonic()
                 if eof:
                     break
@@ -73,6 +94,22 @@ async def ws(ws: WebSocket):
         nonlocal log_task
         while True:
             msg = await ws.receive_json()
+            if not isinstance(msg, dict):
+                continue
+            if "configure" in msg:
+                config = msg["configure"]
+                if isinstance(config, dict):
+                    if type(config.get("gpu_interval")) is int and config[
+                        "gpu_interval"
+                    ] in (1, 2, 5, 10, 30):
+                        intervals["gpu"] = config["gpu_interval"]
+                    if type(config.get("state_interval")) is int and config[
+                        "state_interval"
+                    ] in (2, 5, 10, 30):
+                        intervals["state"] = config["state_interval"]
+                    if type(config.get("gpu_enabled")) is bool:
+                        intervals["gpu_enabled"] = config["gpu_enabled"]
+                continue  # 환경설정 변경으로 열려 있는 로그 구독이 취소되지 않도록 한다
             if log_task:
                 log_task.cancel()
                 log_task = None
@@ -92,11 +129,15 @@ async def ws(ws: WebSocket):
         job_marks: dict[int, str] = {}
         while True:
             now = time.monotonic()
-            if now - last_gpu >= 1:
+            if last_gpu == 0 or (
+                intervals["gpu_enabled"] and now - last_gpu >= intervals["gpu"]
+            ):
                 last_gpu = now
-                await send({"type": "gpu", "gpus": await asyncio.to_thread(gpu.snapshot)})
+                await send(
+                    {"type": "gpu", "gpus": await asyncio.to_thread(gpu.snapshot)}
+                )
             marks = {j.id: j.status for j in jobs.all_jobs()}
-            if now - last_state >= 2 or marks != job_marks:
+            if now - last_state >= intervals["state"] or marks != job_marks:
                 last_state, job_marks = now, marks
                 await send({"type": "state", **await state.build()})
             if sub["kind"] == "job":
@@ -107,7 +148,9 @@ async def ws(ws: WebSocket):
                     # 진행률 줄은 같은 줄을 덮어쓰므로 마지막 줄 하나를 겹쳐서 다시 보낸다
                     start, lines = job.read(max(0, sub["since"] - 1))
                     sub["since"], sub["version"] = job.total, job.version
-                    await send({"type": "job", **job.summary(), "from": start, "lines": lines})
+                    await send(
+                        {"type": "job", **job.summary(), "from": start, "lines": lines}
+                    )
             await asyncio.sleep(0.25)
 
     tasks = [asyncio.create_task(reader()), asyncio.create_task(pusher())]

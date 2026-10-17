@@ -17,7 +17,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from app.config import ADMIN_PASSWORD, ADMIN_USERNAME, SESSION_DAYS, SESSION_SECRET
 
 COOKIE = "vllm_admin_session"
-PUBLIC_PREFIXES = ("/login", "/api/login", "/css/", "/js/", "/favicon")
+PUBLIC_PREFIXES = ("/login", "/api/login", "/css/", "/js/", "/icons/", "/favicon")
 
 # 무차별 대입 방지: IP 당 5분에 10번까지 실패 허용
 _failures: dict[str, list[float]] = {}
@@ -31,8 +31,9 @@ def too_many_failures(ip: str) -> bool:
 
 
 def check_password(ip: str, username: str, password: str) -> bool:
-    ok = hmac.compare_digest(username.encode(), ADMIN_USERNAME.encode()) & hmac.compare_digest(
-        password.encode(), ADMIN_PASSWORD.encode())
+    ok = hmac.compare_digest(
+        username.encode(), ADMIN_USERNAME.encode()
+    ) & hmac.compare_digest(password.encode(), ADMIN_PASSWORD.encode())
     if not ok:
         if ip not in _failures and len(_failures) >= 4096:
             _failures.pop(next(iter(_failures)))
@@ -44,8 +45,11 @@ def check_password(ip: str, username: str, password: str) -> bool:
 
 def issue_session() -> str:
     now = datetime.now(timezone.utc)
-    return jwt.encode({"sub": ADMIN_USERNAME, "iat": now, "exp": now + timedelta(days=SESSION_DAYS)},
-                      SESSION_SECRET, algorithm="HS256")
+    return jwt.encode(
+        {"sub": ADMIN_USERNAME, "iat": now, "exp": now + timedelta(days=SESSION_DAYS)},
+        SESSION_SECRET,
+        algorithm="HS256",
+    )
 
 
 def session_valid(token: str | None) -> bool:
@@ -62,7 +66,11 @@ def ws_authenticated(ws: WebSocket) -> bool:
     origin = ws.headers.get("origin")
     host = ws.headers.get("host", "").lower()
     origin_host = urlsplit(origin).netloc.lower() if origin else ""
-    return session_valid(ws.cookies.get(COOKIE)) and bool(origin_host) and origin_host == host
+    return (
+        session_valid(ws.cookies.get(COOKIE))
+        and bool(origin_host)
+        and origin_host == host
+    )
 
 
 class AuthMiddleware:
@@ -78,9 +86,13 @@ class AuthMiddleware:
             fetch_site = headers.get(b"sec-fetch-site", b"").lower()
             origin = headers.get(b"origin")
             host = headers.get(b"host", b"").decode("latin-1").lower()
-            origin_host = urlsplit(origin.decode("latin-1")).netloc.lower() if origin else ""
+            origin_host = (
+                urlsplit(origin.decode("latin-1")).netloc.lower() if origin else ""
+            )
             if fetch_site == b"cross-site" or (origin and origin_host != host):
-                resp = JSONResponse({"detail": "요청 출처가 올바르지 않습니다"}, status_code=403)
+                resp = JSONResponse(
+                    {"detail": "요청 출처가 올바르지 않습니다"}, status_code=403
+                )
                 return await resp(scope, receive, send)
         if path.startswith(PUBLIC_PREFIXES):
             return await self.app(scope, receive, send)

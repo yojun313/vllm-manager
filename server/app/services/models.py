@@ -18,9 +18,13 @@ def files_dir(model: str) -> Path | None:
     """./vllm rm 의 model_files_dir 과 같은 규칙: /models/X → MODELS_DIR/X, repo id → hf-cache"""
     model = model.strip("'\"")
     if model.startswith("/models/"):
-        return Path(VLLM_ENV["MODELS_DIR"]) / model[len("/models/"):]
+        return Path(VLLM_ENV["MODELS_DIR"]) / model[len("/models/") :]
     if "/" in model:
-        return Path(VLLM_ENV["HF_CACHE_DIR"]) / "hub" / ("models--" + model.replace("/", "--"))
+        return (
+            Path(VLLM_ENV["HF_CACHE_DIR"])
+            / "hub"
+            / ("models--" + model.replace("/", "--"))
+        )
     return None
 
 
@@ -53,7 +57,13 @@ def parse_yaml(path: Path) -> tuple[dict, dict, str]:
         m = re.match(r"^([a-z0-9-]+):\s*(.*?)\s*(#.*)?$", line)
         if m:
             y[m.group(1)] = m.group(2)
-    served = y.get("served-model-name", y.get("model", "")).strip("[]").split(",")[0].strip().strip("'\"")
+    served = (
+        y.get("served-model-name", y.get("model", ""))
+        .strip("[]")
+        .split(",")[0]
+        .strip()
+        .strip("'\"")
+    )
     return y, meta, served
 
 
@@ -71,14 +81,29 @@ def plan(path: Path, tp: int, total_mib: int) -> dict:
     hit = _plan_cache.get(key)
     if hit and time.time() - hit[0] < 600:
         return hit[1]
-    r = subprocess.run([sys.executable, str(LIB_DIR / "plan.py"), str(path), VLLM_ENV["MODELS_DIR"],
-                        VLLM_ENV["HF_CACHE_DIR"], str(tp), str(total_mib)],
-                       capture_output=True, text=True, env={**os.environ, **VLLM_ENV}, timeout=60)
+    r = subprocess.run(
+        [
+            sys.executable,
+            str(LIB_DIR / "plan.py"),
+            str(path),
+            VLLM_ENV["MODELS_DIR"],
+            VLLM_ENV["HF_CACHE_DIR"],
+            str(tp),
+            str(total_mib),
+        ],
+        capture_output=True,
+        text=True,
+        env={**os.environ, **VLLM_ENV},
+        timeout=60,
+    )
     res = {}
     for line in r.stdout.splitlines():
         k, _, v = line.partition("=")
         res[k] = " ".join(shlex.split(v)) if v else ""
-    p = {"need_mib": int(res.get("PLAN_NEED_MIB") or 0), "desc": res.get("PLAN_DESC", "")}
+    p = {
+        "need_mib": int(res.get("PLAN_NEED_MIB") or 0),
+        "desc": res.get("PLAN_DESC", ""),
+    }
     m = re.search(r"--max-model-len (\d+)", res.get("PLAN_ARGS", ""))
     p["ctx"] = int(m.group(1)) if m else None
     _plan_cache[key] = (time.time(), p)
@@ -99,8 +124,19 @@ def list_models(total_mib: int) -> list[dict]:
         except Exception as e:  # noqa: BLE001 - 한 모델 계산 실패가 목록 전체를 막지 않도록
             p = {"need_mib": 0, "desc": f"계산 실패: {e}", "ctx": None}
         d = files_dir(y.get("model", ""))
-        out.append({"alias": path.stem, "model": y.get("model", ""), "served": served, "gpus": gpus,
-                    "embed": y.get("runner") == "pooling", **p,
-                    "files_dir": str(d) if d else "", "files_bytes": du_bytes(d) if d else 0,
-                    "files_shared": [a for a in refs.get(y.get("model", ""), []) if a != path.stem]})
+        out.append(
+            {
+                "alias": path.stem,
+                "model": y.get("model", ""),
+                "served": served,
+                "gpus": gpus,
+                "embed": y.get("runner") == "pooling",
+                **p,
+                "files_dir": str(d) if d else "",
+                "files_bytes": du_bytes(d) if d else 0,
+                "files_shared": [
+                    a for a in refs.get(y.get("model", ""), []) if a != path.stem
+                ],
+            }
+        )
     return out
