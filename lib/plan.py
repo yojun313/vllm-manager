@@ -48,6 +48,20 @@ for line in open(cfg_path, encoding="utf-8"):
 concurrency = int(comments.get("concurrency", concurrency))
 model = yml.get("model", "")
 
+# Omni는 단계마다 가중치와 KV 캐시가 달라 일반 TP 계산을 적용하지 않습니다.
+if comments.get("engine", "vllm") == "vllm-omni":
+    required = int(comments.get("gpus", "2"))
+    if tp != required:
+        raise SystemExit(f"Omni 배포 설정은 GPU {required}장이 필요합니다.")
+    fraction = float(comments.get("memory-fraction", "0.9"))
+    if not 0 < fraction <= 0.97:
+        raise SystemExit("Omni memory-fraction은 0 초과 0.97 이하여야 합니다.")
+    emit(
+        fraction * gpu_total,
+        [],
+        f"vLLM-Omni 단계별 배포 · GPU당 {fraction:.0%} 예약 (일반 TP 추정 제외)",
+    )
+
 
 # ---- 모델 폴더(config.json, 가중치 크기) 찾기: 로컬 → hf-cache → HF API
 def hf_get(url):
@@ -69,6 +83,7 @@ def weights_in(files_sizes):
 
 
 config, weights, source = None, 0, ""
+tokenizer_config = {}
 if model.startswith("/models/"):
     d = os.path.join(models_dir, model[len("/models/") :])
     snaps = [d]
@@ -83,6 +98,11 @@ else:
 for d in snaps:
     if os.path.exists(os.path.join(d, "config.json")):
         config = json.load(open(os.path.join(d, "config.json")))
+        try:
+            with open(os.path.join(d, "tokenizer_config.json"), encoding="utf-8") as f:
+                tokenizer_config = json.load(f)
+        except (OSError, ValueError):
+            tokenizer_config = {}
         weights = weights_in(
             [
                 (f, os.path.getsize(os.path.join(d, f)))
@@ -99,6 +119,12 @@ if config is None and "/" in model and not model.startswith("/"):
             [(s["rfilename"], s.get("size") or 0) for s in info.get("siblings", [])]
         )
         source = "HF"
+        try:
+            tokenizer_config = hf_get(
+                f"https://huggingface.co/{model}/resolve/main/tokenizer_config.json"
+            )
+        except Exception:
+            tokenizer_config = {}
     except Exception:
         config = None
 
@@ -138,16 +164,48 @@ else:
 kv_dtype = 1 if yml.get("kv-cache-dtype", "auto").startswith("fp8") else 2
 per_token = 2 * attn_layers * math.ceil(kv_heads / tp) * head_dim * kv_dtype
 
-# ---- 컨텍스트 길이: 숫자로 적혀 있으면 그대로, auto 면 KV 가 AUTO_KV_GIB 안에 들어가는 가장 긴 길이
-model_max = c.get("max_position_embeddings") or 32768
+# ---- 컨텍스트 길이: 모델/토크나이저의 제한 중 가장 작은 값을 사용합니다.
+# AudioFlamingo3는 max_position_embeddings=32768이지만 model_max_length=8192입니다.
+length_keys = (
+    "max_position_embeddings",
+    "n_positions",
+    "max_seq_len",
+    "seq_length",
+    "model_max_length",
+    "max_sequence_length",
+    "max_seq_length",
+    "seq_len",
+)
+limits = [
+    obj[key]
+    for obj in (c, tokenizer_config)
+    for key in length_keys
+    if isinstance(obj.get(key), (int, float)) and 0 < obj[key] < 10**12
+]
+model_max = int(min(limits)) if limits else 32768
 ml = yml.get("max-model-len", "auto")
 if ml.isdigit():
     max_len = int(ml)
+    if not 0 < max_len <= model_max:
+        raise SystemExit(
+            f"max-model-len={max_len}은 모델 허용 길이 {model_max}을 초과하거나 올바르지 않습니다. "
+            "auto 또는 허용 길이 이하로 설정해야 합니다."
+        )
 else:
-    cands = [l for l in (model_max, 131072, 65536, 32768) if l <= model_max]
+    cands = sorted(
+        {
+            model_max,
+            *(
+                l
+                for l in (131072, 65536, 32768, 16384, 8192, 4096, 2048, 1024)
+                if l <= model_max
+            ),
+        },
+        reverse=True,
+    )
     max_len = next(
         (l for l in cands if per_token * l * concurrency <= auto_kv),
-        min(model_max, 32768),
+        min(model_max, 1024),
     )
 
 kv = per_token * max_len * concurrency

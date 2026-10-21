@@ -37,7 +37,6 @@ gpu_ids() {
 gpu_count() { gpu_ids | grep -c .; }
 gpu_total_mib() { nvidia-smi -i "$(gpu_ids | head -1)" --query-gpu=memory.total --format=csv,noheader,nounits; }
 is_managed_gpu() { gpu_ids | grep -qx "$1"; }
-gpu_ids >/dev/null   # 한 번 계산해 캐시 (설정이 잘못되면 여기서 바로 종료)
 
 # ---------------------------------------------------------------- helpers
 die()  { echo "❌ $*" >&2; exit 1; }
@@ -65,11 +64,15 @@ config_path() {
 
 # "# gpus: N" 주석에서 권장 GPU 수를 읽는다 (없으면 1)
 config_gpus() { sed -n 's/^# *gpus: *\([0-9]\+\).*/\1/p' "$1" | head -1 | grep . || echo 1; }
+config_engine() { sed -n 's/^# *engine: *\([^ ]*\).*/\1/p' "$1" | head -1 | grep . || echo vllm; }
 
 # served-model-name 의 첫 번째 이름 (없으면 model 값)
 config_served_name() {
-    local v
-    v=$(sed -n 's/^served-model-name: *//p' "$1" | head -1)
+    local v=""
+    # Omni 0.29 파이프라인은 전역 served-model-name을 거부하므로 기본 모델명을 사용합니다.
+    if [[ "$(config_engine "$1")" != vllm-omni ]]; then
+        v=$(sed -n 's/^served-model-name: *//p' "$1" | head -1)
+    fi
     [[ -z "$v" ]] && v=$(sed -n 's/^model: *//p' "$1" | head -1)
     v="${v#[}"; v="${v%%,*}"; v="${v%]}"
     echo "$v" | tr -d ' "'"'"
@@ -85,7 +88,9 @@ list_containers() {
 # models/x.yaml 을 GPU tp 장으로 띄울 때의 메모리 계획 → PLAN_NEED_MIB, PLAN_ARGS, PLAN_DESC
 plan() {
     local total; total=$(gpu_total_mib)
-    eval "$(python3 "$ROOT/lib/plan.py" "$1" "$MODELS_DIR" "$HF_CACHE_DIR" "$2" "$total")"
+    local result
+    result=$(python3 "$ROOT/lib/plan.py" "$1" "$MODELS_DIR" "$HF_CACHE_DIR" "$2" "$total") || return $?
+    eval "$result"
 }
 
 # GPU 한 장의 새 모델용 여유 MiB (계산은 lib/gpufree.py). $2: 교체될 컨테이너 이름(그 몫은 빼고 계산)
@@ -125,10 +130,57 @@ api_key() { [[ -f "$API_KEY_FILE" ]] && sed -n 's/^VLLM_API_KEY=//p' "$API_KEY_F
 
 # 이미지가 없으면 진행률을 보여주며 먼저 받는다 (첫 실행 시 수 GB, 몇 분 걸림)
 ensure_image() {
+    local image="${1:-$VLLM_IMAGE}"
     (( DRY_RUN )) && return 0
-    docker_ image inspect "$VLLM_IMAGE" >/dev/null 2>&1 && return 0
-    info "이미지 다운로드 중: $VLLM_IMAGE (처음 한 번만, 수 분 소요)"
-    docker_ pull "$VLLM_IMAGE" || die "이미지를 받지 못했습니다. .env 의 VLLM_IMAGE 태그를 확인하세요."
+    if docker_ image inspect "$image" >/dev/null 2>&1; then
+        info "이미지 준비 완료 (기존 이미지 사용): $image"
+        return 0
+    fi
+    if [[ -n "${VLLM_OMNI_IMAGE:-}" && "$image" == "$VLLM_OMNI_IMAGE" ]]; then
+        info "Omni 이미지가 없어 자동 빌드를 시작합니다: $image"
+        cmd_omni_build
+        return
+    fi
+    info "이미지 다운로드 중: $image (처음 한 번만, 수 분 소요)"
+    docker_ pull "$image" || die "이미지를 받지 못했습니다. .env 의 이미지 설정을 확인해야 합니다. Omni 로컬 이미지는 ./vllm omni-build 로 빌드합니다."
+}
+
+cmd_omni_build() {
+    [[ -n "${VLLM_OMNI_IMAGE:-}" ]] || die ".env 에 VLLM_OMNI_IMAGE 설정이 필요합니다."
+    info "Omni 이미지 빌드 시작: $VLLM_OMNI_IMAGE (기반 이미지: $VLLM_IMAGE)"
+    BUILDKIT_PROGRESS=plain run docker_ build --progress=plain -f "$ROOT/docker/omni.Dockerfile" \
+        --build-arg "VLLM_BASE_IMAGE=$VLLM_IMAGE" \
+        -t "$VLLM_OMNI_IMAGE" "$ROOT/docker"
+    info "Omni 이미지 빌드 완료: $VLLM_OMNI_IMAGE"
+}
+
+cmd_setup() {
+    info "[1/5] 필수 실행 도구를 확인합니다."
+    local tool
+    for tool in python3 nvidia-smi docker flock; do
+        command -v "$tool" >/dev/null || die "필수 실행 도구가 없습니다: $tool"
+    done
+    info "[2/5] GPU와 Docker 접근 권한을 확인합니다."
+    gpu_ids >/dev/null
+    nvidia-smi --query-gpu=index,name,driver_version,memory.total --format=csv,noheader
+    docker_ info >/dev/null || die "Docker 데몬에 접근할 수 없습니다."
+    info "[3/5] 모델·캐시 디렉터리를 준비합니다."
+    mkdir -p "$CONFIG_DIR" "$MODELS_DIR" "$HF_CACHE_DIR" "$VLLM_CACHE_DIR"
+    # PM2 재시작이나 수동 실행이 겹쳐도 초기 빌드를 중복 수행하지 않습니다.
+    exec 9>"$VLLM_CACHE_DIR/.setup.lock"
+    info "초기 환경 준비 잠금을 기다립니다."
+    flock 9
+    info "[4/5] 일반 vLLM 이미지를 준비합니다."
+    ensure_image "$VLLM_IMAGE"
+    info "[5/5] vLLM-Omni 이미지를 준비합니다."
+    if [[ -n "${VLLM_OMNI_IMAGE:-}" ]]; then
+        ensure_image "$VLLM_OMNI_IMAGE"
+    else
+        info "VLLM_OMNI_IMAGE가 비어 있어 Omni 이미지 준비를 생략합니다."
+    fi
+    flock -u 9
+    exec 9>&-
+    info "실행 환경 준비가 완료되었습니다."
 }
 
 show_gpus() {
@@ -177,9 +229,26 @@ cmd_up() {
     [[ -n "$model" ]] || die "모델 이름이 필요합니다. 예: ./vllm up qwen3.5-9b -g 0"
 
     local cfg; cfg=$(config_path "$model"); model=$(basename "$cfg" .yaml)
+    local engine image deploy="" engine_args=() entry_args=() config_mount=()
+    engine=$(config_engine "$cfg")
+    image="$VLLM_IMAGE"
+    case "$engine" in
+        vllm) ;;
+        vllm-omni)
+            image="${VLLM_OMNI_IMAGE:-}"
+            [[ -n "$image" ]] || die ".env 에 VLLM_OMNI_IMAGE 설정이 필요합니다. (.env.example 참고)"
+            deploy=$(sed -n 's/^# *deploy-config: *\([^ ]*\).*/\1/p' "$cfg" | head -1)
+            [[ "$deploy" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*\.yaml$ && -f "$ROOT/deploy/$deploy" ]] \
+                || die "Omni deploy-config 가 올바르지 않습니다: $deploy (deploy/ 파일명을 지정합니다.)"
+            entry_args=(--entrypoint python3)
+            ;;
+        *) die "지원하지 않는 실행 엔진입니다: $engine" ;;
+    esac
     local ngpu; ngpu=$(config_gpus "$cfg")
     [[ -z "$gpus" ]] || [[ "$gpus" =~ ^[0-9]+(,[0-9]+)*$ ]] || die "GPU 지정 형식이 잘못됐습니다: $gpus (예: 0 또는 0,1)"
     [[ -n "$gpus" ]] && ngpu=$(awk -F, '{print NF}' <<<"$gpus")
+    [[ -z "$gpus" || "$(tr ',' '\n' <<<"$gpus" | sort -u | wc -l)" -eq "$ngpu" ]] || die "GPU 번호가 중복되었습니다."
+    [[ "$engine" != vllm-omni || "$ngpu" -eq "$(config_gpus "$cfg")" ]] || die "Omni 배포 설정은 GPU $(config_gpus "$cfg")장이 필요합니다."
     local g
     for g in ${gpus//,/ }; do
         is_managed_gpu "$g" || die "GPU$g 는 사용하도록 설정되지 않았습니다 (.env 의 GPU_COUNT/GPU_IDS, 사용 가능: $(gpu_ids | paste -sd, -))"
@@ -225,6 +294,31 @@ cmd_up() {
         die "포트 $port 는 이미 사용 중입니다. (./vllm ps)"
     fi
 
+    if [[ "$engine" == vllm ]]; then
+        engine_args=(--config "/configs/$model.yaml" --tensor-parallel-size "$tp")
+        # PLAN_ARGS 는 plan.py 에서 생성한 숫자 옵션만 포함합니다.
+        local planned=(); read -r -a planned <<<"$PLAN_ARGS" || true
+        engine_args+=("${planned[@]}")
+        if (( ${#planned[@]} )); then
+            local launch_cfg="$VLLM_CACHE_DIR/launch-configs/$name.yaml"
+            if (( ! DRY_RUN )); then
+                python3 "$ROOT/lib/launch-config.py" "$cfg" "$launch_cfg" "${planned[@]}"
+            fi
+            config_mount=(-v "$launch_cfg:/configs/$model.yaml:ro")
+        fi
+    else
+        local ref
+        ref=$(sed -n 's/^model: *//p' "$cfg" | head -1 | tr -d '\"'"'" )
+        [[ -n "$ref" ]] || die "모델 경로가 없습니다."
+        # vLLM/Omni 파서는 serve 바로 다음에 모델 위치 인자를 요구합니다.
+        engine_args=(-m vllm_omni.entrypoints.cli.main serve "$ref"
+            --omni --deploy-config "/deploy/$deploy")
+    fi
+
+
+    # 이미지 준비가 실패해도 기존 서버는 유지합니다.
+    ensure_image "$image"
+
     # 같은 모델+GPU 조합이 이미 있으면 교체
     if docker_ inspect "$old" >/dev/null 2>&1; then
         info "기존 $old 교체"
@@ -232,9 +326,8 @@ cmd_up() {
     fi
 
     mkdir -p "$HF_CACHE_DIR" "$VLLM_CACHE_DIR"
-    ensure_image
 
-    info "모델: $model | GPU: $gpus (TP=$tp) | 포트: $port | 인증: $([[ -f "$API_KEY_FILE" ]] && echo 켜짐 || echo 꺼짐) | 이미지: $VLLM_IMAGE"
+    info "모델: $model | 엔진: $engine | GPU: $gpus | 포트: $port | 인증: $([[ -f "$API_KEY_FILE" ]] && echo 켜짐 || echo 꺼짐) | 이미지: $image"
     run docker_ run -d --name "$name" \
         --gpus "\"device=$gpus\"" --ipc=host --restart unless-stopped \
         -p "${BIND_ADDR:-0.0.0.0}:$port:8000" \
@@ -242,14 +335,15 @@ cmd_up() {
         -v "$HF_CACHE_DIR:/root/.cache/huggingface" \
         -v "$VLLM_CACHE_DIR:/root/.cache/vllm" \
         -v "$CONFIG_DIR:/configs:ro" \
+        "${config_mount[@]}" \
+        -v "$ROOT/deploy:/deploy:ro" \
         "${TOKEN_ARGS[@]}" "${AUTH_ARGS[@]}" \
         --label "$LABEL=$gpus" --label "vllm-serve.model=$model" --label "vllm-serve.port=$port" \
         --label "vllm-serve.mem=$PLAN_NEED_MIB" \
-        "$VLLM_IMAGE" \
-        --config "/configs/$model.yaml" \
+        --label "vllm-serve.engine=$engine" \
+        "${entry_args[@]}" "$image" \
+        "${engine_args[@]}" \
         --host 0.0.0.0 --port 8000 \
-        --tensor-parallel-size "$tp" \
-        $PLAN_ARGS \
         "${extra[@]}" >/dev/null
     (( DRY_RUN )) && return 0
 
@@ -349,6 +443,12 @@ gib() { bc -l <<<"$1/1024" | xargs printf '%.1f'; }
 # → FIT=ok|no|unknown, FIT_MSG, FIT_JSON(웹 관리 화면용)
 fit_check() {
     local repo="$1" tmp total ngpu cap n1 d1 nn dn
+    if [[ "${repo,,}" == *qwen3-omni-30b-a3b* ]]; then
+        FIT=unknown
+        FIT_MSG="vLLM-Omni 단계별 배포 모델입니다. 일반 TP 메모리 추정은 적용하지 않습니다. 기본 설정은 GPU 2장, GPU당 90% 예약입니다."
+        FIT_JSON='{"fit":"unknown","message":"vLLM-Omni 단계별 배포 모델입니다. 기본 설정은 GPU 2장, GPU당 90% 예약이며 실제 추론 검증이 필요합니다.","engine":"vllm-omni","gpus":2}'
+        return 0
+    fi
     tmp=$(mktemp --suffix=.yaml)
     printf 'model: %s\nmax-model-len: 4096\n# concurrency: 1\n' "$repo" >"$tmp"
     total=$(gpu_total_mib)
@@ -544,6 +644,8 @@ usage() {
   new <HF repo id> [별칭]      다운로드 없이 설정 파일만 생성
   rm <모델> [--files]          모델 설정 삭제 (--files: 가중치 파일까지 삭제, 실행 중이면 거부)
   key [new|off]                API 키 보기 / 새로 만들기(인증 켜기) / 지우기(인증 끄기)
+  omni-build                   CUDA 버전을 유지하는 별도 vLLM-Omni 이미지를 빌드합니다.
+  setup                        GPU·Docker·디렉터리·일반/Omni 이미지를 자동 준비합니다.
 
   -n, --dry-run                실제로 실행하지 않고 docker 명령만 출력
 
@@ -563,6 +665,7 @@ done
 set -- "${args[@]+"${args[@]}"}"
 
 cmd="${1:-}"; shift || true
+[[ "$cmd" == setup ]] || gpu_ids >/dev/null
 case "$cmd" in
     "")               cmd_interactive ;;
     up|start|serve)   cmd_up "$@" ;;
@@ -575,6 +678,8 @@ case "$cmd" in
     pull|download)    cmd_pull "$@" ;;
     fit)              cmd_fit "$@" ;;
     key)              cmd_key "$@" ;;
+    omni-build)       cmd_omni_build ;;
+    setup)            cmd_setup ;;
     -h|--help|help)   usage ;;
     *)                die "알 수 없는 명령: $cmd (./vllm help)" ;;
 esac

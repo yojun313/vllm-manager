@@ -1,0 +1,15 @@
+# Copy to models/qwen3-8b.yaml, then run ./vllm up qwen3-8b -g 0
+# Alternatively, generate a config with ./vllm new Qwen/Qwen3-8B
+# engine: vllm
+# gpus: 1
+# concurrency: 4
+model: Qwen/Qwen3-8B
+served-model-name: Qwen/Qwen3-8B
+max-model-len: auto
+reasoning-parser: qwen3
+enable-auto-tool-choice: true
+tool-call-parser: hermes
+
+# A repo ID downloads weights to HF_CACHE_DIR on the first start.
+# For weights downloaded with ./vllm pull, use model: /models/Qwen__Qwen3-8B
+# The launcher manages host, port, TP, and automatic memory sizing.

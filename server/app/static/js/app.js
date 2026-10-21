@@ -258,7 +258,7 @@
           <div class="rc-title"><h3>${esc(c.model)}</h3><div class="served">${esc(c.served)}</div></div>
           <span class="pill ${k}"><span class="dot ${k}"></span>${t}</span></div>
         ${starting ? progressHtml(c.progress, c.created) : ''}
-        <div class="chips"><span class="chip">GPU <b>${esc(c.gpus)}</b></span><span class="chip">:<b>${esc(c.port)}</b></span>
+        <div class="chips"><span class="chip">${c.engine === 'vllm-omni' ? 'vLLM-Omni' : 'vLLM'}</span><span class="chip">GPU <b>${esc(c.gpus)}</b></span><span class="chip">:<b>${esc(c.port)}</b></span>
           ${c.mem ? `<span class="chip">예약 <b>${gib(c.mem)}</b> GiB</span>` : ''}<span class="chip">${esc(c.status)}</span></div>
         <div class="actions">
           <button class="btn sm" data-copy="${esc(url)}" title="${esc(url)}">주소 복사</button>
@@ -317,6 +317,10 @@
         msg = ok ? `여유 ${gib(f)} GiB 중 ${gib(m.need_mib)} GiB 사용` : `공간 부족 · 여유 ${gib(Math.max(0, f))} GiB`;
       }
       const running = S.containers.filter((c) => c.model === m.alias);
+      if (m.engine_configured === false) {
+        ok = false;
+        msg = '루트 .env에 VLLM_OMNI_IMAGE 설정이 필요합니다.';
+      }
       const target = sel === 'auto' ? ranked[0]?.[0].join(',') : sel;
       const replacing = running.some((c) => c.gpus === target);
       const ctx = m.ctx ? (m.ctx >= 1024 ? Math.round(m.ctx / 1024) + 'k' : m.ctx) : '';
@@ -331,6 +335,7 @@
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button></div>
         <div class="need"><strong>${gib(m.need_mib)}</strong><span>GiB × ${m.gpus} GPU${ctx ? ` · 컨텍스트 ${ctx}` : ''}</span></div>
         <div class="desc">${esc(m.desc)}</div>
+        <div class="chips"><span class="chip">${m.engine === 'vllm-omni' ? 'vLLM-Omni' : 'vLLM'}</span>${m.deploy_config ? `<span class="chip">${esc(m.deploy_config)}</span>` : ''}</div>
         <div class="seg">${seg}</div>
         <div class="fit ${ok ? 'ok' : 'bad'}">${esc(msg)}</div>
         <button class="btn primary" data-up="${esc(m.alias)}" data-gpus="${sel === 'auto' ? '' : esc(sel)}" ${ok && S.docker_ok ? '' : 'disabled'}>

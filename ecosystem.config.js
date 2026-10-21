@@ -15,11 +15,15 @@ module.exports = {
     {
       name: "vllm",
       cwd: dir,
-      script: path.join(dir, "run.py"),
-      interpreter: path.join(dir, ".venv", "bin", "python"),
+      script: path.join(dir, "start.sh"),
+      interpreter: "bash",
+      env: { PYTHONUNBUFFERED: "1", BUILDKIT_PROGRESS: "plain" },
+      stop_exit_codes: [78],
+      restart_delay: 10000,
       watch: [
         path.join(dir, "app"),
         path.join(dir, "run.py"),
+        path.join(dir, "start.sh"),
         path.join(dir, ".env"),
         path.join(root, ".env"),
       ],

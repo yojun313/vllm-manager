@@ -114,6 +114,25 @@ except ValueError:
 model_type = cfg.get("model_type", "")
 archs = cfg.get("architectures") or []
 
+# Omni는 일반 모델의 README 옵션/TP 자동 계산을 사용하지 않습니다.
+if model_type == "qwen3_omni_moe" or "qwen3-omni-30b-a3b" in repo.lower():
+    thinking = any(s in repo.lower() for s in ("thinking", "captioner"))
+    profile = "qwen3-omni-thinking.yaml" if thinking else "qwen3-omni.yaml"
+    print(
+        "\n".join(
+            [
+                "# engine: vllm-omni",
+                "# gpus: 2",
+                "# memory-fraction: 0.9",
+                f"# deploy-config: {profile}",
+                "# 단계별 GPU 배치는 deploy/ 설정을 사용합니다. GPU 번호는 컨테이너 내부 번호입니다.",
+                f"model: {model_ref}",
+                f"served-model-name: {repo}",
+            ]
+        )
+    )
+    sys.exit(0)
+
 # 가중치 크기로 권장 GPU 수 추정 (GPU 메모리의 75% 이상이면 2장)
 # vLLM 은 폴더 최상위의 가중치만 읽는다 (original/, metal/ 등 하위 폴더 제외)
 weight_bytes = 0

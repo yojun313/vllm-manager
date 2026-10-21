@@ -20,6 +20,7 @@ _FMT = "\t".join(
         "{{.ID}}",
         "{{.State}}",
         "{{.CreatedAt}}",
+        f'{{{{.Label "{LABEL}.engine"}}}}',
     ]
 )
 
@@ -60,6 +61,7 @@ def list_containers(max_age: float = 1.0) -> list[dict]:
                 "id": f[6],
                 "state": f[7],
                 "created": _epoch(f[8]),
+                "engine": f[9] if len(f) > 9 and f[9] else "vllm",
             }
         )
     _cache.update(at=time.time(), value=out)

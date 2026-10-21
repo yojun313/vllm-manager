@@ -58,7 +58,11 @@ def parse_yaml(path: Path) -> tuple[dict, dict, str]:
         if m:
             y[m.group(1)] = m.group(2)
     served = (
-        y.get("served-model-name", y.get("model", ""))
+        (
+            y.get("model", "")
+            if meta.get("engine") == "vllm-omni"
+            else y.get("served-model-name", y.get("model", ""))
+        )
         .strip("[]")
         .split(",")[0]
         .strip()
@@ -130,6 +134,10 @@ def list_models(total_mib: int) -> list[dict]:
                 "model": y.get("model", ""),
                 "served": served,
                 "gpus": gpus,
+                "engine": meta.get("engine", "vllm"),
+                "deploy_config": meta.get("deploy-config", ""),
+                "engine_configured": meta.get("engine", "vllm") == "vllm"
+                or bool(VLLM_ENV.get("VLLM_OMNI_IMAGE")),
                 "embed": y.get("runner") == "pooling",
                 **p,
                 "files_dir": str(d) if d else "",
