@@ -35,7 +35,12 @@
   </header>
 
   <main id="dashboardView">
-  <div class="page-heading" id="overview"><div><h2>대시보드</h2></div><a class="btn" href="#downloadSection">+ 새 모델 추가</a></div>
+  <div class="page-heading" id="overview"><div><h2>대시보드</h2></div><div class="page-actions">
+    <div class="view-switch" role="group" aria-label="대시보드 보기 방식">
+      <button type="button" data-view-mode="cards" aria-pressed="true"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>카드</button>
+      <button type="button" data-view-mode="list" aria-pressed="false"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M8 5h13M8 12h13M8 19h13M3 5h1M3 12h1M3 19h1"/></svg>리스트</button>
+    </div><a class="btn" href="#downloadSection">+ 새 모델 추가</a>
+  </div></div>
   <div id="banner"></div>
 
   <section class="first" id="gpuSection">
@@ -80,6 +85,7 @@
     <div class="settings-grid">
       <section class="card settings-card"><div class="settings-title"><span>◐</span><div><h3>화면과 테마</h3><p>화면 표시 설정</p></div></div>
         <label class="setting-row" for="prefTheme"><span><b>화면 모드</b><small>시스템 설정에 따라 화면 모드가 자동 전환됩니다.</small></span><select class="input" id="prefTheme"><option value="system">시스템 설정</option><option value="light">라이트</option><option value="dark">다크</option></select></label>
+        <label class="setting-row" for="prefViewMode"><span><b>대시보드 보기</b><small>모델 목록의 표시 방식을 선택합니다. GPU는 카드로 표시됩니다.</small></span><select class="input" id="prefViewMode"><option value="cards">카드</option><option value="list">리스트</option></select></label>
         <label class="setting-row" for="prefCompact"><span><b>컴팩트 보기</b><small>카드 간격을 줄여 더 많은 정보를 표시합니다.</small></span><input type="checkbox" class="switch" id="prefCompact"></label>
         <label class="setting-row" for="prefMotion"><span><b>애니메이션 줄이기</b><small>상태 점과 카드의 움직임을 최소화합니다.</small></span><input type="checkbox" class="switch" id="prefMotion"></label>
       </section>

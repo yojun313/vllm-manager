@@ -83,7 +83,7 @@ async def _build() -> dict:
     gpus = await asyncio.to_thread(gpu.snapshot)
     total = gpus[0]["total"] if gpus else 81920
     return {
-        "image": VLLM_ENV.get("VLLM_IMAGE", ""),
+        "image": VLLM_ENV.get("VLLM_AUDIO_IMAGE") or VLLM_ENV.get("VLLM_IMAGE", ""),
         "omni_image": VLLM_ENV.get("VLLM_OMNI_IMAGE", ""),
         "docker_ok": ok,
         "docker_error": "" if ok else err,

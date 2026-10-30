@@ -334,7 +334,7 @@
           <button class="icon-btn" data-del="${esc(m.alias)}" title="모델 삭제" aria-label="${esc(m.alias)} 삭제">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button></div>
         <div class="need"><strong>${gib(m.need_mib)}</strong><span>GiB × ${m.gpus} GPU${ctx ? ` · 컨텍스트 ${ctx}` : ''}</span></div>
-        <div class="desc">${esc(m.desc)}</div>
+        <div class="desc" title="${esc(m.desc)}">${esc(m.desc)}</div>
         <div class="chips"><span class="chip">${m.engine === 'vllm-omni' ? 'vLLM-Omni' : 'vLLM'}</span>${m.deploy_config ? `<span class="chip">${esc(m.deploy_config)}</span>` : ''}</div>
         <div class="seg">${seg}</div>
         <div class="fit ${ok ? 'ok' : 'bad'}">${esc(msg)}</div>

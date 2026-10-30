@@ -115,8 +115,14 @@ model_type = cfg.get("model_type", "")
 archs = cfg.get("architectures") or []
 
 # Omni는 일반 모델의 README 옵션/TP 자동 계산을 사용하지 않습니다.
-if model_type == "qwen3_omni_moe" or "qwen3-omni-30b-a3b" in repo.lower():
-    thinking = any(s in repo.lower() for s in ("thinking", "captioner"))
+if (
+    model_type == "qwen3_omni_moe"
+    or any(a.startswith("Qwen3OmniMoe") for a in archs)
+    or "qwen3-omni-30b-a3b" in repo.lower()
+):
+    thinking = cfg.get("enable_audio_output") is False or any(
+        s in repo.lower() for s in ("thinking", "captioner")
+    )
     profile = "qwen3-omni-thinking.yaml" if thinking else "qwen3-omni.yaml"
     print(
         "\n".join(
@@ -125,9 +131,9 @@ if model_type == "qwen3_omni_moe" or "qwen3-omni-30b-a3b" in repo.lower():
                 "# gpus: 2",
                 "# memory-fraction: 0.9",
                 f"# deploy-config: {profile}",
+                f"# 자동 생성: {repo}",
                 "# 단계별 GPU 배치는 deploy/ 설정을 사용합니다. GPU 번호는 컨테이너 내부 번호입니다.",
                 f"model: {model_ref}",
-                f"served-model-name: {repo}",
             ]
         )
     )

@@ -17,7 +17,7 @@ Built on Docker, vLLM, and vLLM-Omni for serving, with FastAPI and uv for the we
 
 * **Two serving engines**: choose vLLM or vLLM-Omni per model. Each server uses its own container and port; both engines can run together when GPU memory permits.
 * **Declarative model configs**: model YAML files select the engine and model. vLLM uses its official `--config` format; Omni uses a separate deployment YAML for pipeline stages and GPU placement.
-* **Automatic environment setup**: console startup runs `uv sync`, checks GPU and Docker access, pulls the vLLM image if missing, and builds the Omni image if missing. Setup and build output stream to the terminal and PM2 logs.
+* **Automatic environment setup**: console startup runs `uv sync`, checks GPU and Docker access, pulls the vLLM base image if missing, and builds audio-enabled vLLM and Omni images if missing. Setup and build output stream to the terminal and PM2 logs.
 * **GPU memory planning**: estimate vLLM weights, KV cache, and working memory from the model architecture. Omni uses a configurable reservation per GPU alongside stage-specific memory settings. Starts are refused when the reservation exceeds available memory; actual inference memory still depends on the workload.
 * **Download & config generation**: pull a Hugging Face repository and get a config file with the options recommended in the model card. Regular vLLM models receive an estimated fit check before downloading; Qwen3-Omni uses its stage deployment requirements instead.
 * **Multi-GPU execution**: choose GPUs per run (`-g 0,1`) or select them automatically. vLLM uses tensor parallelism across the selected GPUs; Omni uses the parallelism and device mapping in its deployment profile.
@@ -68,7 +68,7 @@ Model configs in `models/` are server-specific and not part of the repository. T
 ./vllm setup
 ```
 
-This checks the host tools and GPU configuration, creates model and cache directories, pulls the base vLLM image if needed, and builds the Omni image if configured and missing. Existing images are reused. Docker pull and build output is printed directly. The web console runs this step automatically at startup. Host drivers, Docker, NVIDIA Container Toolkit, and uv must already be installed.
+This checks the host tools and GPU configuration, creates model and cache directories, pulls the base vLLM image if needed, and builds the configured audio-enabled vLLM and Omni images if missing. Existing images are reused. Docker pull and build output is printed directly. The web console runs this step automatically at startup. Host drivers, Docker, NVIDIA Container Toolkit, and uv must already be installed.
 
 ### 4) Start a vLLM model
 
@@ -122,6 +122,7 @@ Use `pull` instead of `new` to download the weights in advance. The included Qwe
 | `key [new\|off]` | Show, create or remove the API key. |
 | `setup` | Prepare GPU access, directories, and both serving images. Build Omni if its image is missing. |
 | `omni-build` | Build or rebuild the configured Omni image with plain-text build logs. |
+| `audio-build` | Build or rebuild the regular vLLM image with audio decoding support. |
 
 **Global option**
 
@@ -153,7 +154,7 @@ Containers are named `vllm-<model>-g<GPUs>` (e.g. `vllm-qwen3-8b-g0`), so differ
 
 1. **Fit check for vLLM**: the needed memory is calculated from the Hugging Face `config.json` and file sizes only. If the model cannot run on all usable GPUs (`GPU_COUNT`) even in the lightest setting (4,096-token context, 1 concurrent request), you are asked before downloading. Outside a terminal it stops unless `--force` is given.
 2. **Download** into `MODELS_DIR/<org>__<name>`, skipping folders vLLM does not use (`original/`, `metal/`, `onnx/`, `openvino/`). An interrupted download resumes with the same command.
-3. **Config file**: `models/<alias>.yaml` is created (an existing file is never overwritten). Qwen3-Omni-30B-A3B checkpoints select the Omni engine and a two-GPU deployment profile; their fit status is reported as unknown rather than using the regular TP estimator.
+3. **Config file**: `models/<alias>.yaml` is created. For an existing config that still points to the same HF repository, only `model` is updated to the downloaded `/models/<org>__<name>` path; custom settings and unrelated model paths are preserved. Qwen3-Omni-30B-A3B checkpoints select the Omni engine and a two-GPU deployment profile. Instruct uses the full speech pipeline; Thinking, Captioner, or checkpoints with `enable_audio_output: false` use the Thinker-only profile. Local architecture metadata also identifies renamed Qwen3-Omni forks. The Qwen3-Omni repository-name fit check reports unknown rather than using the regular TP estimator.
 
 For regular vLLM models, the generated config includes the following. It is printed after creation, so you can adjust it.
 
@@ -267,6 +268,7 @@ Before starting, the free memory of the target GPUs is checked; if it is not eno
 
 * Full-width layout with a collapsible sidebar and a mobile menu.
 * Light / dark / system theme and a compact mode.
+* Card / list view for models, selectable from the dashboard or display settings and saved per browser. GPU monitoring keeps its card layout in both modes.
 * Settings for the GPU push interval (1 · 2 · 5 · 10 · 30 s), the model / job refresh interval (2 · 5 · 10 · 30 s), pausing GPU updates, and showing temperature / power.
 * Start, restart, stop and delete vLLM and Omni models; engine and deployment profile labels with per-GPU fit checks before starting.
 * Model download with byte-level progress, speed, ETA, and a confirmation for models that will not fit.
@@ -426,6 +428,7 @@ Keys in the root `.env`:
 | Key | Description | Default |
 |---|---|---|
 | `VLLM_IMAGE` | Base vLLM Docker image | `vllm/vllm-openai:v0.29.0-cu129` |
+| `VLLM_AUDIO_IMAGE` | Regular vLLM serving image with `vllm[audio]`; built automatically when missing. Empty uses the base image directly. | `local/vllm-audio:0.29.0-cu129` |
 | `VLLM_OMNI_IMAGE` | Omni image to build and reuse; empty skips Omni setup | `local/vllm-omni:0.29.0-cu129` |
 | `MODELS_DIR` | Model weights. Mounted read-only as `/models` in the container. | `/mnt/disk/vllm` |
 | `HF_CACHE_DIR` | Cache used when a config's `model` is a HF repo id | `/mnt/disk/vllm/hf-cache` |
@@ -454,6 +457,8 @@ The image tag must match the CUDA version supported by your GPU driver. vLLM's d
 | `v0.30.0-cu129` | Broken: torch (`2.14.0+cu130`) and torchvision (`cu129`) in the image do not match, so start-up fails ([vllm#56829](https://github.com/vllm-project/vllm/issues/56829)). |
 
 `docker/omni.Dockerfile` builds the Omni image from `VLLM_IMAGE` and pins Omni 0.29.0rc1 to commit `aff7d64948f6c0e81e9b3272234623044e215967`. Dependency constraints preserve the base image's vLLM, PyTorch, and CUDA package versions; incompatible requirements fail the build instead of replacing that stack. Changing the base version requires checking Omni compatibility as well.
+
+`docker/audio.Dockerfile` installs the matching `vllm[audio]` extras while preserving the base CUDA/PyTorch stack. Regular model servers use `VLLM_AUDIO_IMAGE` when configured. This includes the PyAV, SciPy, SoundFile, and soxr dependencies needed to decode and resample Music Flamingo audio. Run `./vllm audio-build` to rebuild this image, then restart the affected model containers to apply it. Both BuildKit and the legacy Docker builder stream their output to setup logs.
 
 Run `./vllm omni-build` to rebuild the configured Omni tag after changing the Dockerfile or its base image. Startup reuses an existing image tag, so it does not rebuild solely because source files changed. Image builds require Docker access and network connectivity.
 
@@ -490,9 +495,11 @@ lib/
   gpufree.py               Free memory per GPU
   gen-config.py            Model config generation
   launch-config.py         Runtime config without duplicate planned options
+  localize-config.py       Point matching repository configs at downloaded weights
 deploy/                    vLLM / Omni model config examples and Omni stage profiles
 docker/
   omni.Dockerfile          CUDA-compatible Omni image build
+  audio.Dockerfile         Regular vLLM image with audio decoding support
 models/                    Model configs (not tracked)
 server/                    Web console (FastAPI, uv)
   start.sh                 uv environment setup and startup

@@ -3,12 +3,13 @@
   'use strict';
   const KEY = 'vllm.workspace.preferences';
   const defaults = { theme: 'system', compact: false, reduceMotion: false, sidebarCollapsed: false,
-    gpuEnabled: true, gpuInterval: 1, stateInterval: 2, gpuDetails: true };
+    gpuEnabled: true, gpuInterval: 1, stateInterval: 2, gpuDetails: true, viewMode: 'cards' };
   const media = matchMedia('(prefers-color-scheme: light)');
   function normalize(raw) {
     const p = { ...defaults };
     if (!raw || typeof raw !== 'object') return p;
     if (['system', 'light', 'dark'].includes(raw.theme)) p.theme = raw.theme;
+    if (['cards', 'list'].includes(raw.viewMode)) p.viewMode = raw.viewMode;
     for (const k of ['compact', 'reduceMotion', 'sidebarCollapsed', 'gpuEnabled', 'gpuDetails']) {
       if (typeof raw[k] === 'boolean') p[k] = raw[k];
     }
@@ -22,6 +23,7 @@
     const root = document.documentElement;
     const theme = current.theme === 'system' ? (media.matches ? 'light' : 'dark') : current.theme;
     root.dataset.theme = theme;
+    root.dataset.view = current.viewMode;
     root.classList.toggle('compact', current.compact);
     root.classList.toggle('reduce-motion', current.reduceMotion);
     root.classList.toggle('sidebar-collapsed', current.sidebarCollapsed);
@@ -42,8 +44,11 @@
   apply();
   media.addEventListener('change', apply);
   const fields = { prefTheme: 'theme', prefCompact: 'compact', prefMotion: 'reduceMotion',
-    prefGpuEnabled: 'gpuEnabled', prefGpuInterval: 'gpuInterval', prefStateInterval: 'stateInterval', prefGpuDetails: 'gpuDetails' };
+    prefGpuEnabled: 'gpuEnabled', prefGpuInterval: 'gpuInterval', prefStateInterval: 'stateInterval', prefGpuDetails: 'gpuDetails', prefViewMode: 'viewMode' };
   function sync() {
+    document.querySelectorAll('[data-view-mode]').forEach(button => {
+      button.setAttribute('aria-pressed', String(button.dataset.viewMode === current.viewMode));
+    });
     for (const [id, key] of Object.entries(fields)) {
       const el = document.getElementById(id);
       if (!el) continue;
@@ -63,6 +68,9 @@
   }
   document.addEventListener('DOMContentLoaded', () => {
     sync();
+    document.querySelectorAll('[data-view-mode]').forEach(button => {
+      button.addEventListener('click', () => save({ ...current, viewMode: button.dataset.viewMode }));
+    });
     for (const [id, key] of Object.entries(fields)) {
       const el = document.getElementById(id);
       el?.addEventListener('change', () => save({ ...current, [key]: el.type === 'checkbox' ? el.checked : el.value }));

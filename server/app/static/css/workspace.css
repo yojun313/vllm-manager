@@ -152,3 +152,57 @@ section, section.first { margin-top: 28px; }
 .app-icon { display: block; width: 100%; height: 100%; object-fit: contain; }
 .side-logo, .mark { background: transparent; box-shadow: none; overflow: hidden; }
 .side-logo { width: 38px; height: 38px; }
+
+/* Allow the header to fit long image tags without shrinking the app icon. */
+.top > * { flex-shrink: 0; }
+.top .brand { flex: 1 1 0; min-width: 0; }
+.top .sp { display: none; }
+.top .mark, .side-logo { flex: none; }
+.top .brand h1 { white-space: normal; overflow-wrap: anywhere; line-height: 1.35; }
+.top .brand .sub { max-width: none; white-space: normal; overflow: visible; overflow-wrap: anywhere; line-height: 1.5; }
+.top .live { flex: none; white-space: nowrap; }
+.page-heading { flex-wrap: wrap; }
+.page-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.view-switch { display: inline-flex; flex: none; gap: 3px; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: var(--input-bg); }
+.view-switch button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 36px; border: 1px solid transparent; border-radius: 7px; padding: 7px 10px; background: transparent; color: var(--dim); font: inherit; font-size: 12px; cursor: pointer; }
+.view-switch button[aria-pressed="true"] { background: var(--surface); border-color: var(--line2); color: var(--a1); box-shadow: var(--shadow); }
+.view-switch button:hover { color: var(--text); }
+html[data-view="list"] :is(.run, .lib) { grid-template-columns: minmax(0,1fr); gap: 6px; }
+html[data-view="list"] :is(.run, .lib) > .card { display: grid; grid-template-columns: minmax(0,1fr); gap: 8px; border-radius: 10px; padding: 10px 14px; }
+html[data-view="list"] :is(.run, .lib) > .card > * { min-width: 0; margin-top: 0; margin-bottom: 0; }
+html[data-view="list"] .rc-title :is(h3, .served) { white-space: normal; overflow-wrap: anywhere; }
+html[data-view="list"] .need strong { font-size: 18px; }
+html[data-view="list"] .rc-title h3 { font-size: 14px; }
+html[data-view="list"] .rc-title .served { font-size: 11px; }
+html[data-view="list"] .seg { width: fit-content; max-width: 100%; }
+html[data-view="list"] .desc { min-height: 0; }
+@media (min-width:1200px) {
+  html[data-view="list"] .run > .card { grid-template-columns: minmax(0,1fr) minmax(180px,.9fr) auto; align-items: center; }
+  html[data-view="list"] .run .rc-head { grid-column: 1; grid-row: 1; }
+  html[data-view="list"] .run .chips { grid-column: 2; grid-row: 1; }
+  html[data-view="list"] .run .actions { grid-column: 3; grid-row: 1; justify-content: flex-end; max-width: 300px; }
+  html[data-view="list"] .run .prog { grid-column: 1 / -1; grid-row: 2; }
+  html[data-view="list"] .lib > .card { grid-template-columns: minmax(0,1.2fr) minmax(0,1fr) minmax(0,1fr) auto; align-items: center; column-gap: 16px; row-gap: 4px; }
+  html[data-view="list"] .lib .rc-head { grid-column: 1; grid-row: 1; }
+  html[data-view="list"] .lib .need { grid-column: 2; grid-row: 1; }
+  html[data-view="list"] .lib .chips { grid-column: 1; grid-row: 2; }
+  html[data-view="list"] .lib .seg { grid-column: 3; grid-row: 1; }
+  html[data-view="list"] .lib .fit { grid-column: 3; grid-row: 2; }
+  html[data-view="list"] .lib > .card > .btn { grid-column: 4; grid-row: 1 / 3; min-width: 92px; }
+  html[data-view="list"] .lib .desc { grid-column: 2; grid-row: 2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 10px; }
+  html[data-view="list"] .need span { font-size: 11px; }
+  html[data-view="list"] .lib .fit { font-size: 11px; }
+}
+@media (max-width:540px) {
+  .page-heading > div:first-child { flex: 1 0 auto; }
+  .page-actions { flex: 0 1 auto; gap: 8px; }
+  .top .live .txt { display: none; }
+  .top .live { padding: 5px; }
+  .top .brand .sub { font-size: 9px; }
+  .view-switch button { min-height: 38px; padding: 7px 9px; }
+}
+@media (max-width:540px) {
+  #overview > .page-actions { flex: 1 0 100%; min-width: 0; justify-content: space-between; }
+}
+/* Keep header contents inset from the panel edge, including the app icon. */
+.top { padding: 12px; border: 1px solid var(--line); border-top: 0; border-radius: 0 0 12px 12px; background: color-mix(in srgb, var(--surface) 90%, transparent); backdrop-filter: blur(18px); }

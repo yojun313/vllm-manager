@@ -141,17 +141,40 @@ ensure_image() {
         cmd_omni_build
         return
     fi
+    if [[ -n "${VLLM_AUDIO_IMAGE:-}" && "$image" == "$VLLM_AUDIO_IMAGE" ]]; then
+        info "오디오 지원 이미지가 없어 자동 빌드를 시작합니다: $image"
+        cmd_audio_build
+        return
+    fi
     info "이미지 다운로드 중: $image (처음 한 번만, 수 분 소요)"
     docker_ pull "$image" || die "이미지를 받지 못했습니다. .env 의 이미지 설정을 확인해야 합니다. Omni 로컬 이미지는 ./vllm omni-build 로 빌드합니다."
+}
+
+build_image() {
+    local progress=()
+    if (( DRY_RUN )) || docker_ buildx version >/dev/null 2>&1; then
+        progress=(--progress=plain)
+    else
+        info "Docker 기본 빌더를 사용합니다. 빌드 출력은 그대로 표시됩니다."
+    fi
+    BUILDKIT_PROGRESS=plain run docker_ build "${progress[@]}" "$@"
 }
 
 cmd_omni_build() {
     [[ -n "${VLLM_OMNI_IMAGE:-}" ]] || die ".env 에 VLLM_OMNI_IMAGE 설정이 필요합니다."
     info "Omni 이미지 빌드 시작: $VLLM_OMNI_IMAGE (기반 이미지: $VLLM_IMAGE)"
-    BUILDKIT_PROGRESS=plain run docker_ build --progress=plain -f "$ROOT/docker/omni.Dockerfile" \
+    build_image -f "$ROOT/docker/omni.Dockerfile" \
         --build-arg "VLLM_BASE_IMAGE=$VLLM_IMAGE" \
         -t "$VLLM_OMNI_IMAGE" "$ROOT/docker"
     info "Omni 이미지 빌드 완료: $VLLM_OMNI_IMAGE"
+}
+
+cmd_audio_build() {
+    [[ -n "${VLLM_AUDIO_IMAGE:-}" ]] || die ".env 에 VLLM_AUDIO_IMAGE 설정이 필요합니다."
+    info "오디오 지원 vLLM 이미지 빌드 시작: $VLLM_AUDIO_IMAGE"
+    build_image -f "$ROOT/docker/audio.Dockerfile" \
+        --build-arg "VLLM_BASE_IMAGE=$VLLM_IMAGE" -t "$VLLM_AUDIO_IMAGE" "$ROOT/docker"
+    info "오디오 지원 vLLM 이미지 빌드 완료: $VLLM_AUDIO_IMAGE"
 }
 
 cmd_setup() {
@@ -172,6 +195,9 @@ cmd_setup() {
     flock 9
     info "[4/5] 일반 vLLM 이미지를 준비합니다."
     ensure_image "$VLLM_IMAGE"
+    if [[ -n "${VLLM_AUDIO_IMAGE:-}" ]]; then
+        ensure_image "$VLLM_AUDIO_IMAGE"
+    fi
     info "[5/5] vLLM-Omni 이미지를 준비합니다."
     if [[ -n "${VLLM_OMNI_IMAGE:-}" ]]; then
         ensure_image "$VLLM_OMNI_IMAGE"
@@ -231,7 +257,7 @@ cmd_up() {
     local cfg; cfg=$(config_path "$model"); model=$(basename "$cfg" .yaml)
     local engine image deploy="" engine_args=() entry_args=() config_mount=()
     engine=$(config_engine "$cfg")
-    image="$VLLM_IMAGE"
+    image="${VLLM_AUDIO_IMAGE:-$VLLM_IMAGE}"
     case "$engine" in
         vllm) ;;
         vllm-omni)
@@ -417,14 +443,18 @@ write_config() {
     local repo="$1" alias="${2:-}"
     [[ -n "$alias" ]] || alias=$(tr '[:upper:]' '[:lower:]' <<<"${repo##*/}")
     local f="$CONFIG_DIR/$alias.yaml"
+    # new 이후 pull한 경우도 다운로드 완료된 로컬 가중치를 사용합니다.
+    local dir="$MODELS_DIR/${repo//\//__}" model_ref="$repo" mdir=""
+    [[ -d "$dir" ]] && { model_ref="/models/${repo//\//__}"; mdir="$dir"; }
     if [[ -e "$f" ]]; then
-        echo "ℹ️  설정 파일이 이미 있어서 그대로 둡니다: $f"
+        if [[ -n "$mdir" && -f "$dir/config.json" ]]; then
+            python3 "$ROOT/lib/localize-config.py" "$f" "$repo" "$model_ref"
+        fi
+        echo "ℹ️  기존 모델 설정을 사용합니다: $f"
         return 0
     fi
 
     # 받아둔 폴더(org__name)가 있으면 그걸 쓰고, 없으면 repo id 로 (up 할 때 hf-cache 로 자동 다운로드)
-    local dir="$MODELS_DIR/${repo//\//__}" model_ref="$repo" mdir=""
-    [[ -d "$dir" ]] && { model_ref="/models/${repo//\//__}"; mdir="$dir"; }
     local gpu_gib
     gpu_gib=$(gpu_total_mib | awk '{print $1/1024}')
 
@@ -645,6 +675,7 @@ usage() {
   rm <모델> [--files]          모델 설정 삭제 (--files: 가중치 파일까지 삭제, 실행 중이면 거부)
   key [new|off]                API 키 보기 / 새로 만들기(인증 켜기) / 지우기(인증 끄기)
   omni-build                   CUDA 버전을 유지하는 별도 vLLM-Omni 이미지를 빌드합니다.
+  audio-build                  오디오 디코딩을 지원하는 vLLM 이미지를 빌드합니다.
   setup                        GPU·Docker·디렉터리·일반/Omni 이미지를 자동 준비합니다.
 
   -n, --dry-run                실제로 실행하지 않고 docker 명령만 출력
@@ -679,6 +710,7 @@ case "$cmd" in
     fit)              cmd_fit "$@" ;;
     key)              cmd_key "$@" ;;
     omni-build)       cmd_omni_build ;;
+    audio-build)      cmd_audio_build ;;
     setup)            cmd_setup ;;
     -h|--help|help)   usage ;;
     *)                die "알 수 없는 명령: $cmd (./vllm help)" ;;
