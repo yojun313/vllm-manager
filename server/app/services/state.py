@@ -3,8 +3,9 @@
 import asyncio
 import time
 
+from app import config
 from app.config import API_KEY_FILE, MODEL_PUBLIC_URLS, VLLM_ENV
-from app.services import docker, download, gpu, jobs, models, progress
+from app.services import docker, download, gpu, jobs, metrics, models, prepare, progress
 
 _progress_cache: dict[str, tuple[float, dict]] = {}
 
@@ -19,6 +20,8 @@ def _progress(c: dict, healthy: bool) -> dict:
             "pct": 0,
             "detail": c["status"],
             "error": "",
+            "sub": None,
+            "info": None,
         }
     hit = _progress_cache.get(c["name"])
     if hit and time.time() - hit[0] < 2:
@@ -66,6 +69,7 @@ async def _build() -> dict:
     ok, err = await asyncio.to_thread(docker.docker_ok)
     containers = await asyncio.to_thread(docker.list_containers) if ok else []
     served = await asyncio.to_thread(models.served_names)
+    live = metrics.latest()
 
     async def enrich(c):
         c = dict(c)
@@ -77,6 +81,7 @@ async def _build() -> dict:
         )
         c["progress"] = await asyncio.to_thread(_progress, c, c["health"])
         c["served"] = served.get(c["model"], c["model"])
+        c["metrics"] = live.get(c["name"]) if c["health"] else None
         return c
 
     containers = await asyncio.gather(*(enrich(c) for c in containers))
@@ -84,6 +89,12 @@ async def _build() -> dict:
     total = gpus[0]["total"] if gpus else 81920
     return {
         "image": VLLM_ENV.get("VLLM_AUDIO_IMAGE") or VLLM_ENV.get("VLLM_IMAGE", ""),
+        "version": config.APP_VERSION,
+        "demo": config.DEMO,
+        "prepare": dict(prepare.status),
+        "user": config.ADMIN_USERNAME,
+        "models_dir": VLLM_ENV.get("MODELS_DIR", ""),
+        "port_base": int(VLLM_ENV.get("PORT_BASE") or 8000),
         "omni_image": VLLM_ENV.get("VLLM_OMNI_IMAGE", ""),
         "docker_ok": ok,
         "docker_error": "" if ok else err,

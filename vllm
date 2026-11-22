@@ -8,10 +8,24 @@ ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 CONFIG_DIR="$ROOT/models"
 LABEL=vllm-serve.gpus
 
-set -a
-# shellcheck source=.env
-source "$ROOT/.env"
-set +a
+SERVER_DIR="$ROOT/server"
+RUN_DIR="$SERVER_DIR/data"
+export PATH="$HOME/.local/bin:$PATH"
+
+# 루트 .env 가 없어도 되는 명령 (설치·설정·관리 서버 제어)
+case "${1:-}" in
+    configure|doctor|server|update|version|demo|hf-login|-h|--help|help) NEEDS_ENV=0 ;;
+    *) NEEDS_ENV=1 ;;
+esac
+if [[ ! -f "$ROOT/.env" ]] && (( NEEDS_ENV )); then
+    python3 "$ROOT/tools/setup.py" --ensure || { echo "❌ 설정 파일을 만들지 못했습니다. ./vllm configure 를 실행하세요." >&2; exit 1; }
+fi
+if [[ -f "$ROOT/.env" ]]; then
+    set -a
+    # shellcheck source=.env
+    source "$ROOT/.env"
+    set +a
+fi
 
 DRY_RUN=0
 
@@ -106,6 +120,12 @@ port_in_use() {
         return 0
     done < <(list_containers)
     ss -ltnH "sport = :$port" 2>/dev/null | grep -q .   # 다른 프로그램이 쓰는 포트
+}
+
+# Hugging Face CLI: 관리 서버 가상환경(server/.venv)에 함께 설치된 것을 먼저 쓴다
+hf_cli() {
+    if [[ -x "$SERVER_DIR/.venv/bin/hf" ]]; then echo "$SERVER_DIR/.venv/bin/hf"
+    else command -v hf || command -v huggingface-cli || true; fi
 }
 
 gpus_overlap() {
@@ -214,7 +234,7 @@ show_gpus() {
     while IFS=', ' read -r idx used total name; do
         is_managed_gpu "$idx" || continue
         printf "  GPU%s  %s  실사용 %5.1f / %.0f GiB  → 새 모델용 여유 약 %.1f GiB\n" \
-            "$idx" "$name" "$(bc -l <<<"$used/1024")" "$(bc -l <<<"$total/1024")" "$(bc -l <<<"$(gpu_free_mib "$idx")/1024")"
+            "$idx" "$name" "$(gib "$used")" "$(gib "$total")" "$(gib "$(gpu_free_mib "$idx")")"
     done < <(nvidia-smi --query-gpu=index,memory.used,memory.total,name --format=csv,noheader,nounits)
 }
 
@@ -300,7 +320,7 @@ cmd_up() {
     for g in ${gpus//,/ }; do
         free=$(gpu_free_mib "$g" "$old")
         if (( PLAN_NEED_MIB > free )); then
-            echo "❌ GPU$g 공간 부족: 필요 $(bc -l <<<"$PLAN_NEED_MIB/1024" | xargs printf '%.1f')GiB > 여유 $(bc -l <<<"$free/1024" | xargs printf '%.1f')GiB" >&2
+            echo "❌ GPU$g 공간 부족: 필요 $(gib "$PLAN_NEED_MIB")GiB > 여유 $(gib "$free")GiB" >&2
             short=1
         fi
     done
@@ -467,7 +487,7 @@ write_config() {
     echo "실행: ./vllm up $alias"
 }
 
-gib() { bc -l <<<"$1/1024" | xargs printf '%.1f'; }
+gib() { awk -v m="$1" 'BEGIN { printf "%.1f", m / 1024 }'; }
 
 # 다운로드 전에 HF 정보(config.json, 파일 크기)만으로 "가장 가볍게 띄워도"(컨텍스트 4k, 동시 1) 필요한 메모리를 계산
 # → FIT=ok|no|unknown, FIT_MSG, FIT_JSON(웹 관리 화면용)
@@ -524,8 +544,8 @@ cmd_pull() {
     repo="${repo#https://huggingface.co/}"; repo="${repo%/}"
     [[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || die "HF repo id 형식이 아닙니다: '$repo' (예: Qwen/Qwen3-8B)"
 
-    local hf; hf=$(command -v hf || command -v huggingface-cli || true)
-    [[ -n "$hf" ]] || die "hf CLI 가 없습니다. 설치: pip install -U huggingface_hub"
+    local hf; hf=$(hf_cli)
+    [[ -n "$hf" ]] || die "Hugging Face 다운로드 도구가 없습니다. ./vllm doctor 로 설치 상태를 확인하세요."
     local dir="$MODELS_DIR/${repo//\//__}"
 
     # 이 서버 GPU 로 띄울 수 없는 모델이면 받기 전에 확인
@@ -647,13 +667,160 @@ cmd_interactive() {
     for i in "${!cfgs[@]}"; do
         plan "${cfgs[$i]}" "$(config_gpus "${cfgs[$i]}")"
         printf "  [%d] %-26s GPU %s장 × %5.1f GiB\n" "$i" "$(basename "${cfgs[$i]}" .yaml)" \
-            "$(config_gpus "${cfgs[$i]}")" "$(bc -l <<<"$PLAN_NEED_MIB/1024")"
+            "$(config_gpus "${cfgs[$i]}")" "$(gib "$PLAN_NEED_MIB")"
     done
     local choice; read -rp "모델 번호: " choice
     [[ "$choice" =~ ^[0-9]+$ && -n "${cfgs[$choice]:-}" ]] || die "잘못된 번호입니다."
     local cfg="${cfgs[$choice]}"
     local gpus; read -rp "GPU (예: 0, 1, 0,1) [엔터 = 자동 선택]: " gpus
     if [[ -n "$gpus" ]]; then cmd_up "$(basename "$cfg" .yaml)" -g "$gpus"; else cmd_up "$(basename "$cfg" .yaml)"; fi
+}
+
+# ---------------------------------------------------------------- 관리 서버·설치
+need_uv() {
+    command -v uv >/dev/null || die "uv 가 없습니다. 설치: curl -LsSf https://astral.sh/uv/install.sh | sh"
+}
+console_port() { sed -n 's/^PORT=//p' "$SERVER_DIR/.env" 2>/dev/null | tail -1 | tr -d '[:space:]'; }
+console_pid() {
+    local pid; pid=$(cat "$RUN_DIR/console.pid" 2>/dev/null || true)
+    [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null && echo "$pid"
+}
+console_url() {
+    local host; host=$(sed -n 's/^HOST=//p' "$SERVER_DIR/.env" 2>/dev/null | tail -1)
+    if [[ "$host" == 127.0.0.1 ]]; then echo "http://127.0.0.1:$(console_port)"
+    else echo "http://$(hostname -I 2>/dev/null | awk '{print $1}' | grep . || echo localhost):$(console_port)"; fi
+}
+
+cmd_server() {
+    local action="${1:-status}"
+    mkdir -p "$RUN_DIR"
+    case "$action" in
+        start|run)   # 이 터미널에서 실행 (Ctrl+C 로 종료)
+            need_uv
+            python3 "$ROOT/tools/setup.py" --ensure
+            exec bash "$SERVER_DIR/start.sh" ;;
+        up)
+            need_uv
+            if console_pid >/dev/null; then echo "관리 서버가 이미 실행 중입니다: $(console_url)"; return 0; fi
+            python3 "$ROOT/tools/setup.py" --ensure
+            : >"$RUN_DIR/console.log"
+            setsid nohup bash "$SERVER_DIR/start.sh" >>"$RUN_DIR/console.log" 2>&1 </dev/null &
+            echo $! >"$RUN_DIR/console.pid"
+            # 초기 설정 주소(토큰 포함)나 오류가 보이도록 잠시 로그를 기다린다
+            local i
+            for i in $(seq 1 60); do
+                console_pid >/dev/null || { tail -n 20 "$RUN_DIR/console.log"; die "관리 서버를 시작하지 못했습니다. 위 로그를 확인하세요."; }
+                grep -q "관리 웹 서버를 시작합니다" "$RUN_DIR/console.log" && break
+                sleep 1
+            done
+            sleep 2
+            grep -A6 "초기 설정이 필요합니다" "$RUN_DIR/console.log" | sed "s#<이 서버 주소 / this host>:[0-9]*#$(console_url | sed 's#http://##')#" || true
+            echo "✅ 관리 서버 실행 중: $(console_url)"
+            echo "   로그: ./vllm server logs   중지: ./vllm server down" ;;
+        down|stop)
+            local pid; pid=$(console_pid || true)
+            if [[ -z "$pid" ]]; then echo "백그라운드로 실행 중인 관리 서버가 없습니다."; return 0; fi
+            kill -TERM -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+            rm -f "$RUN_DIR/console.pid"
+            echo "관리 서버를 중지했습니다. (실행 중인 모델은 그대로 유지됩니다)" ;;
+        restart) cmd_server down; sleep 1; cmd_server up ;;
+        status)
+            if console_pid >/dev/null; then echo "실행 중 · $(console_url) · PID $(console_pid)"
+            else echo "백그라운드로 실행 중이 아닙니다 (시작: ./vllm server up)"; fi ;;
+        logs)
+            [[ -f "$RUN_DIR/console.log" ]] || die "로그가 없습니다. 먼저 ./vllm server up 을 실행하세요."
+            exec tail -n 200 -f "$RUN_DIR/console.log" ;;
+        enable)   # 부팅 시 자동 시작 (systemd 사용자 서비스, sudo 불필요)
+            command -v systemctl >/dev/null || die "systemd 가 없는 시스템입니다."
+            local unit="$HOME/.config/systemd/user/vllm-manager.service"
+            mkdir -p "$(dirname "$unit")"
+            cat >"$unit" <<EOF
+[Unit]
+Description=vLLM Manager web console
+After=network-online.target docker.service
+
+[Service]
+ExecStart=/usr/bin/env bash $SERVER_DIR/start.sh
+WorkingDirectory=$SERVER_DIR
+Environment=PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
+Restart=on-failure
+RestartPreventExitStatus=78
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+EOF
+            cmd_server down >/dev/null
+            systemctl --user daemon-reload
+            systemctl --user enable --now vllm-manager.service
+            echo "✅ 자동 시작을 등록했습니다 (systemctl --user status vllm-manager)."
+            echo "   로그아웃 상태에서도 실행하려면 한 번만: sudo loginctl enable-linger $USER" ;;
+        disable)
+            systemctl --user disable --now vllm-manager.service 2>/dev/null || true
+            rm -f "$HOME/.config/systemd/user/vllm-manager.service"
+            echo "자동 시작을 해제했습니다." ;;
+        *) die "사용법: ./vllm server [up|down|restart|status|logs|start|enable|disable]" ;;
+    esac
+}
+
+cmd_update() {
+    git -C "$ROOT" pull --ff-only || die "업데이트를 받지 못했습니다. 직접 수정한 파일이 있는지 확인하세요 (git status)."
+    need_uv
+    uv sync --project "$SERVER_DIR" --python 3.12
+    if console_pid >/dev/null; then cmd_server restart
+    elif systemctl --user is-active --quiet vllm-manager.service 2>/dev/null; then systemctl --user restart vllm-manager.service; echo "관리 서버를 재시작했습니다."
+    else echo "✅ 업데이트 완료. 관리 서버를 재시작하면 적용됩니다."; fi
+}
+
+# 설치 상태 점검: 무엇이 빠졌고 어떻게 고치는지 알려준다 (아무것도 바꾸지 않음)
+cmd_doctor() {
+    local bad=0
+    ok()   { echo "  ✅ $*"; }
+    warn() { echo "  ⚠️  $*"; }
+    fail() { echo "  ❌ $*"; bad=1; }
+    echo "vLLM Manager $(cat "$ROOT/VERSION" 2>/dev/null) 설치 점검"
+    local t
+    for t in git curl python3 flock ss; do
+        command -v "$t" >/dev/null && ok "$t" || fail "$t 이(가) 없습니다 (패키지 관리자로 설치: git curl python3 util-linux iproute2)"
+    done
+    if command -v nvidia-smi >/dev/null && nvidia-smi >/dev/null 2>&1; then
+        local driver; driver=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -1)
+        ok "NVIDIA 드라이버 $driver · GPU $(nvidia-smi --query-gpu=index --format=csv,noheader | wc -l)장"
+        if [[ "${VLLM_IMAGE:-}" == *-cu129* && "${driver%%.*}" -lt 575 ]]; then
+            warn "기본 이미지(-cu129)는 드라이버 575 이상용입니다. 드라이버를 올리거나 맞는 CUDA 버전의 이미지로 바꾸세요 (./vllm configure 또는 웹 설정)."
+        fi
+    else fail "nvidia-smi 를 실행할 수 없습니다. NVIDIA 드라이버를 설치하세요."; fi
+    if ! command -v docker >/dev/null; then fail "Docker 가 없습니다: https://docs.docker.com/engine/install/"
+    elif ! docker info >/dev/null 2>&1; then fail "Docker 권한이 없습니다: sudo usermod -aG docker \$USER 실행 후 다시 로그인하세요."
+    else
+        ok "Docker $(docker version --format '{{.Server.Version}}' 2>/dev/null)"
+        if docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q nvidia || command -v nvidia-ctk >/dev/null; then ok "NVIDIA Container Toolkit"
+        else fail "NVIDIA Container Toolkit 이 없습니다: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html"; fi
+        local img
+        for img in "${VLLM_IMAGE:-}" "${VLLM_AUDIO_IMAGE:-}" "${VLLM_OMNI_IMAGE:-}"; do
+            [[ -z "$img" ]] && continue
+            docker image inspect "$img" >/dev/null 2>&1 && ok "이미지 $img" || warn "이미지 $img 가 아직 없습니다 (관리 서버 시작 시 또는 첫 실행 때 자동 준비)"
+        done
+    fi
+    command -v uv >/dev/null && ok "uv $(uv --version | awk '{print $2}')" || fail "uv 가 없습니다: curl -LsSf https://astral.sh/uv/install.sh | sh"
+    [[ -n "$(hf_cli)" ]] && ok "Hugging Face 다운로드 도구" || warn "Hugging Face 다운로드 도구가 없습니다: uv sync --project server 로 설치됩니다"
+    [[ -f "$HOME/.cache/huggingface/token" ]] && ok "Hugging Face 로그인" || warn "Hugging Face 로그인 안 됨 (승인이 필요한 모델만 해당): ./vllm hf-login"
+    if [[ -f "$ROOT/.env" ]]; then
+        ok "모델 폴더 ${MODELS_DIR:-?} · 여유 $(df -h --output=avail "${MODELS_DIR:-/}" 2>/dev/null | tail -1 | tr -d ' ')"
+    else warn "설정 파일(.env)이 없습니다: ./vllm configure"; fi
+    if grep -qE '^ADMIN_(PASS_HASH|PASSWORD)=.+' "$SERVER_DIR/.env" 2>/dev/null; then ok "관리자 계정"
+    else warn "관리자 계정이 없습니다: ./vllm configure 를 실행하거나, 관리 서버를 시작해 표시되는 주소에서 만드세요"; fi
+    [[ -f "$API_KEY_FILE" ]] && ok "모델 API 인증 켜짐" || warn "모델 API 인증이 꺼져 있습니다 (켜기: ./vllm key new 또는 웹의 시스템 화면)"
+    console_pid >/dev/null && ok "관리 서버 실행 중: $(console_url)" || true
+    echo
+    (( bad )) && { echo "❌ 해결해야 할 항목이 있습니다."; return 1; }
+    echo "✅ 필수 항목이 모두 준비됐습니다."
+}
+
+cmd_hf_login() {
+    local hf; hf=$(hf_cli)
+    [[ -n "$hf" ]] || die "Hugging Face 다운로드 도구가 없습니다. 먼저 uv sync --project server 를 실행하세요."
+    "$hf" auth login
 }
 
 usage() {
@@ -668,7 +835,7 @@ usage() {
   ps                           실행 중인 서버 + GPU 여유
   logs [모델|GPU|이름]         로그 보기
   ls                           모델 목록 + 필요 메모리
-  pull [HF repo id] [별칭]     /mnt/disk/vllm 에 다운로드 + models/<별칭>.yaml 자동 생성
+  pull [HF repo id] [별칭]     모델 폴더(MODELS_DIR)에 다운로드 + models/<별칭>.yaml 자동 생성
                                받기 전에 필요 메모리를 계산해 GPU 전부로도 못 띄우면 확인 (--force: 묻지 않음)
   fit <HF repo id>             받지 않고 이 서버에서 띄울 수 있는지만 계산
   new <HF repo id> [별칭]      다운로드 없이 설정 파일만 생성
@@ -677,6 +844,14 @@ usage() {
   omni-build                   CUDA 버전을 유지하는 별도 vLLM-Omni 이미지를 빌드합니다.
   audio-build                  오디오 디코딩을 지원하는 vLLM 이미지를 빌드합니다.
   setup                        GPU·Docker·디렉터리·일반/Omni 이미지를 자동 준비합니다.
+
+  configure [--yes]            설정 마법사: 저장 폴더·GPU·포트·관리자 계정 (웹의 시스템 화면에서도 변경 가능)
+  server [up|down|restart|status|logs|start|enable|disable]
+                               웹 관리 화면 실행/중지. enable = 부팅 시 자동 시작
+  update                       최신 버전으로 업데이트하고 관리 서버를 재시작
+  doctor                       설치 상태 점검 (빠진 것과 해결 방법 안내)
+  hf-login                     Hugging Face 로그인 (승인이 필요한 모델용)
+  demo                         GPU 없이 가상 데이터로 관리 화면 체험
 
   -n, --dry-run                실제로 실행하지 않고 docker 명령만 출력
 
@@ -696,7 +871,7 @@ done
 set -- "${args[@]+"${args[@]}"}"
 
 cmd="${1:-}"; shift || true
-[[ "$cmd" == setup ]] || gpu_ids >/dev/null
+(( NEEDS_ENV )) && [[ "$cmd" != setup ]] && gpu_ids >/dev/null
 case "$cmd" in
     "")               cmd_interactive ;;
     up|start|serve)   cmd_up "$@" ;;
@@ -712,6 +887,13 @@ case "$cmd" in
     omni-build)       cmd_omni_build ;;
     audio-build)      cmd_audio_build ;;
     setup)            cmd_setup ;;
+    configure)        exec python3 "$ROOT/tools/setup.py" "$@" ;;
+    server|console)   cmd_server "$@" ;;
+    update|upgrade)   cmd_update ;;
+    doctor|check)     cmd_doctor ;;
+    hf-login)         cmd_hf_login ;;
+    demo)             need_uv; exec uv run --quiet --project "$SERVER_DIR" --python 3.12 python "$ROOT/tools/demo.py" "$@" ;;
+    version)          cat "$ROOT/VERSION" ;;
     -h|--help|help)   usage ;;
     *)                die "알 수 없는 명령: $cmd (./vllm help)" ;;
 esac

@@ -1,107 +1,142 @@
-# vllm-manager
+<h1 align="center">vLLM Manager</h1>
 
-A self-hosted toolkit for **managing [vLLM](https://github.com/vllm-project/vllm) and [vLLM-Omni](https://github.com/vllm-project/vllm-omni) model servers on a GPU host**. One CLI (`./vllm`) and a web console (**vLLM Control**) handle model downloads, configuration, GPU selection, container lifecycle, and logs. Serve language and multimodal models through OpenAI-compatible APIs, with per-model engine selection and GPU memory checks before starting.
+<p align="center">
+  <b>Run and manage vLLM model servers on your own GPUs, from a browser or one CLI.</b><br>
+  Download a model, see whether it fits before it starts, watch what each GPU is holding, and test the answer.
+</p>
 
-Built on Docker, vLLM, and vLLM-Omni for serving, with FastAPI and uv for the web console.
+<p align="center">
+  <a href="https://www.yojun.dev/vllm-manager/">Website</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#cli-reference">CLI</a> ·
+  <a href="#configuration">Configuration</a> ·
+  <a href="#security">Security</a>
+</p>
 
-<table>
-  <tr>
-    <td align="center" width="50%"><img src="./static/imgs/1.png" alt="Dashboard" width="100%"><br><sub>Dashboard: live GPU memory per model, running servers, memory plan per model</sub></td>
-    <td align="center" width="50%"><img src="./static/imgs/2.png" alt="Models and download" width="100%"><br><sub>Fit check per GPU before starting, model download, API key</sub></td>
-  </tr>
-</table>
+<p align="center">
+  <img src="./docs/assets/screens/desktop-dashboard.png" alt="Dashboard: GPU memory per model, utilisation, running models and their throughput" width="94%">
+</p>
 
----
+vLLM Manager is a self-hosted toolkit for serving models with [vLLM](https://github.com/vllm-project/vllm) and [vLLM-Omni](https://github.com/vllm-project/vllm-omni) on a GPU host. Each model runs in its own Docker container with an OpenAI-compatible API on its own port. A web console and a CLI (`./vllm`) handle the rest: downloads, config files, GPU memory planning, container lifecycle, logs, metrics and the API key.
 
-## 1. Features
+The console is one FastAPI process with no database, no build step and no external CDN, so it also works on servers without outbound web access. English and Korean interface.
 
-* **Two serving engines**: choose vLLM or vLLM-Omni per model. Each server uses its own container and port; both engines can run together when GPU memory permits.
-* **Declarative model configs**: model YAML files select the engine and model. vLLM uses its official `--config` format; Omni uses a separate deployment YAML for pipeline stages and GPU placement.
-* **Automatic environment setup**: console startup runs `uv sync`, checks GPU and Docker access, pulls the vLLM base image if missing, and builds audio-enabled vLLM and Omni images if missing. Setup and build output stream to the terminal and PM2 logs.
-* **GPU memory planning**: estimate vLLM weights, KV cache, and working memory from the model architecture. Omni uses a configurable reservation per GPU alongside stage-specific memory settings. Starts are refused when the reservation exceeds available memory; actual inference memory still depends on the workload.
-* **Download & config generation**: pull a Hugging Face repository and get a config file with the options recommended in the model card. Regular vLLM models receive an estimated fit check before downloading; Qwen3-Omni uses its stage deployment requirements instead.
-* **Multi-GPU execution**: choose GPUs per run (`-g 0,1`) or select them automatically. vLLM uses tensor parallelism across the selected GPUs; Omni uses the parallelism and device mapping in its deployment profile.
-* **Web console (vLLM Control)**: start / restart / stop / delete models, download models with byte-level progress, watch GPU memory / utilization / temperature / power, and follow start-up progress (weight loading, compile, CUDA graph capture) and logs live, from any browser including mobile.
-* **Jobs that survive restarts**: downloads and start-ups run in processes separate from the web server, so restarting the console does not interrupt them, and every device sees the same state.
-* **OpenAI-compatible APIs and API key authentication** for both engines. Supported inputs, outputs, and endpoints depend on the model and engine.
+## Quick start
 
----
+```bash
+curl -fsSL https://raw.githubusercontent.com/yojun313/vllm-manager/main/install.sh | sh
+```
 
-## 2. System Requirements
+You need Linux, an NVIDIA driver, Docker and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html). The installer checks them, prints the exact command for anything missing, and never uses sudo. It:
 
-* **NVIDIA GPU and driver**. Both serving images must use a CUDA runtime compatible with the driver (see [Engine Versions](#11-engine-versions)).
-* **Docker** with the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/) (`docker run --gpus` must work).
-* **`hf` CLI**: `pip install -U huggingface_hub`. Gated models need `hf auth login`.
-* **Python 3.8+, `bc`, `ss` (iproute2), `flock` (util-linux)** for the CLI.
-* **[uv](https://docs.astral.sh/uv/) and Python 3.12** for the web console only.
-* **[PM2](https://pm2.keymetrics.io/)** to keep the web console running (optional).
+1. installs [uv](https://docs.astral.sh/uv/) into your home folder if it is missing,
+2. downloads vLLM Manager into `~/vllm-manager` and installs the console's dependencies,
+3. asks for a model folder, the GPUs to use, a console port and an admin login (every question has a detected default; the password can be generated for you),
+4. starts the console in the background and prints its address.
 
----
+Open the address, go to **Models → Add model**, type a Hugging Face name, and press **Run** when the download finishes. The vLLM runtime image is pulled in the background on first start.
 
-## 3. Installation
+Manage the install with the same launcher:
 
-### 1) Clone
+```bash
+~/vllm-manager/vllm server status    # is the console running, and where
+~/vllm-manager/vllm server logs      # watch its output
+~/vllm-manager/vllm server down      # stop the console (models keep running)
+~/vllm-manager/vllm server up        # start it in the background
+~/vllm-manager/vllm server enable    # start it at boot (systemd user service, no sudo)
+~/vllm-manager/vllm doctor           # check the install and explain what is missing
+~/vllm-manager/vllm update           # pull the latest version and restart the console
+~/vllm-manager/vllm configure        # run the setup questions again
+```
+
+<details>
+<summary>Manual install</summary>
 
 ```bash
 git clone https://github.com/yojun313/vllm-manager.git
 cd vllm-manager
+./vllm configure        # writes .env and server/.env (or skip it and finish setup in the browser)
+./vllm server up
 ```
 
-### 2) Configuration
+If you skip `configure`, the console starts in first-run mode and prints a one-time address (`/setup?token=…`) where you create the admin account. Unattended installs can use `VLLM_MANAGER_YES=1` with the installer or `./vllm configure --yes`.
+</details>
+
+<details>
+<summary>Try it without a GPU (demo mode)</summary>
 
 ```bash
-cp .env.example .env
+./vllm demo        # http://127.0.0.1:7998 · demo / vllm-manager-demo
 ```
 
-The root `.env` holds the serving engine settings and is not tracked by Git (`server/.env` is only for the web console login). Check these keys for your server; the full list is in the [Configuration Reference](#10-configuration-reference).
+The demo runs on four simulated GPUs with sample models in a temporary folder. Starting, stopping, downloading, logs and the playground all work, and nothing touches Docker or your real models. The screenshots on this page come from it (`tools/demo/capture.py`).
+</details>
 
-* `VLLM_IMAGE`: the base vLLM image, built for a CUDA version your driver supports.
-* `VLLM_OMNI_IMAGE`: the Omni image tag to build and reuse, such as `local/vllm-omni:0.29.0-cu129`. Leave empty to skip Omni preparation at console startup.
-* `MODELS_DIR`, `HF_CACHE_DIR`, `VLLM_CACHE_DIR`: where model weights and caches are stored.
-* `GPU_COUNT` or `GPU_IDS`: which GPUs vllm-manager may use. Leave both empty to use every detected GPU.
+<details>
+<summary>Running under PM2</summary>
 
-Model configs in `models/` are server-specific and not part of the repository. The folder is empty after installation; add models with `./vllm pull`.
+`ecosystem.config.js` runs the same launcher under [PM2](https://pm2.keymetrics.io/): `pm2 start ecosystem.config.js`. The PM2 daemon must have Docker access, for example `sg docker -c "pm2 start ecosystem.config.js"` right after adding yourself to the `docker` group.
+</details>
 
-### 3) Prepare the serving environment
+## Features
 
-```bash
-./vllm setup
-```
+### Models
 
-This checks the host tools and GPU configuration, creates model and cache directories, pulls the base vLLM image if needed, and builds the configured audio-enabled vLLM and Omni images if missing. Existing images are reused. Docker pull and build output is printed directly. The web console runs this step automatically at startup. Host drivers, Docker, NVIDIA Container Toolkit, and uv must already be installed.
+| | |
+|---|---|
+| **Search and download** | Search Hugging Face from the console, or `./vllm pull <repo>`. Downloads show byte-level progress, can be cancelled, and resume where they stopped. |
+| **Fit check before download** | Weights, KV cache and headroom are estimated from the model's `config.json`, so you learn whether it fits on one GPU, needs several, or cannot run here before spending the disk space. |
+| **Generated configs** | A config file is written for each model with the options its model card recommends (parsers, context length). Edit it in the console; the previous version is kept. |
+| **Two engines** | vLLM for text, vision, audio-input and embedding models; vLLM-Omni for speech-capable models such as Qwen3-Omni. Chosen per model, and both can run side by side. |
+| **GPU placement** | Pick GPUs per run or let the emptiest be chosen. Combinations that would not fit are marked before you click, and a start that would exceed free memory is refused. |
 
-### 4) Start a vLLM model
+<p align="center">
+  <img src="./docs/assets/screens/desktop-models.png" alt="Model library with memory plan and GPU selection" width="88%">
+</p>
 
-```bash
-# 1. Download a model (creates models/qwen3-8b.yaml)
-./vllm pull Qwen/Qwen3-8B
+### Monitoring and testing
 
-# 2. Start it
-./vllm up qwen3-8b
+| | |
+|---|---|
+| **GPU memory by owner** | Every GPU shows memory per managed model and per outside process (name, user, PID), so a shared server stays readable. |
+| **Model metrics** | Tokens per second, requests in progress and waiting, time to first token and KV cache usage for each running model, read from vLLM's metrics endpoint. |
+| **History** | 24 hours of utilisation, memory, temperature, power and per-model throughput, collected by the server whether or not a browser is open. |
+| **Start-up progress** | Weight loading, compilation and CUDA graph capture as one progress bar with the live log beside it. |
+| **Playground** | Send a message to a running model and read the streamed answer with its speed. The request goes through the console, so the API key never reaches the browser. |
+| **Connection examples** | curl, Python and JavaScript snippets for every running model, with your public address filled in. |
 
-# 3. Send a request (use the address printed by `up`)
-curl http://localhost:8000/v1/chat/completions \
-  -H 'Content-Type: application/json' \
-  -d '{"model": "Qwen/Qwen3-8B", "messages": [{"role": "user", "content": "Hello"}]}'
-```
+<p align="center">
+  <img src="./docs/assets/screens/desktop-monitor.png" alt="Monitoring charts for GPUs and models" width="88%">
+</p>
 
-### 5) Start a vLLM-Omni model
+### Operations
 
-```bash
-# Create the config only; this does not download model weights
-./vllm new Qwen/Qwen3-Omni-30B-A3B-Instruct qwen3-omni-30b-a3b
+| | |
+|---|---|
+| **Settings in the console** | Storage folders, GPUs to use, ports, runtime images, memory planning, public addresses, the model API key and the admin password are all changed on the System and Preferences pages. |
+| **Install checks** | The System page and `./vllm doctor` list what is missing (Docker access, container toolkit, images, Hugging Face sign-in) and how to fix it. |
+| **Jobs that survive restarts** | Downloads and start-ups run in processes separate from the console, so restarting or updating it does not interrupt them, and every device sees the same state. |
+| **Automatic image preparation** | Missing runtime images are pulled or built in the background at start-up, with the output in the console log. |
+| **Any screen** | One responsive app: sidebar on a desktop, tab bar on a phone, light and dark themes. |
 
-# Use the two-GPU deployment profile; weights download on first start
-./vllm up qwen3-omni-30b-a3b -g 0,1
-```
+<table>
+  <tr>
+    <td align="center" width="25%"><img src="./docs/assets/screens/mobile-dashboard.png" alt="Dashboard on a phone" width="100%"><br><sub>Dashboard</sub></td>
+    <td align="center" width="25%"><img src="./docs/assets/screens/mobile-models.png" alt="Models on a phone" width="100%"><br><sub>Models</sub></td>
+    <td align="center" width="25%"><img src="./docs/assets/screens/mobile-monitor.png" alt="Monitoring on a phone" width="100%"><br><sub>Monitoring</sub></td>
+    <td align="center" width="25%"><img src="./docs/assets/screens/mobile-playground.png" alt="Playground on a phone" width="100%"><br><sub>Playground</sub></td>
+  </tr>
+</table>
 
-Use `pull` instead of `new` to download the weights in advance. The included Qwen3-Omni profiles require two GPUs and start with an 8,192-token context and one concurrent request. The full profile places Thinker on container GPU 0 and Talker / Code2Wav on container GPU 1. These are deployment starting points, not a guarantee that every workload fits or every hardware combination is validated.
+## Requirements
 
-`./vllm up` follows the start-up log until the server accepts requests, then prints the address and an example request and exits. The server keeps running in the background. The port depends on the chosen GPU and on which ports are free. If [API authentication](#8-api-authentication) is on, an `Authorization` header is required.
+* **Linux with an NVIDIA GPU and driver.** The runtime image must use a CUDA version the driver supports (see [Engine versions](#engine-versions)). The default image runs on driver 575 and newer.
+* **Docker** with the **NVIDIA Container Toolkit** (`docker run --gpus all …` must work), and your account in the `docker` group.
+* **git, curl, python3 (3.8+), flock and ss** (present on most distributions).
+* **uv**, installed by the installer. It provides Python 3.12 and the Hugging Face download tool for the console.
 
----
-
-## 4. CLI Reference
+## CLI reference
 
 ```
 ./vllm [-n] <command> [args]
@@ -123,6 +158,12 @@ Use `pull` instead of `new` to download the weights in advance. The included Qwe
 | `setup` | Prepare GPU access, directories, and both serving images. Build Omni if its image is missing. |
 | `omni-build` | Build or rebuild the configured Omni image with plain-text build logs. |
 | `audio-build` | Build or rebuild the regular vLLM image with audio decoding support. |
+| `configure [--yes]` | Setup questions: model folder, GPUs, console port, admin login. |
+| `server [up\|down\|restart\|status\|logs\|start\|enable\|disable]` | Control the web console. `start` runs it in the foreground; `enable` starts it at boot. |
+| `update` | Pull the latest version, refresh dependencies and restart the console. |
+| `doctor` | Check the install and explain how to fix what is missing. |
+| `hf-login` | Sign in to Hugging Face (needed for gated models). |
+| `demo` | Run the console on simulated GPUs. |
 
 **Global option**
 
@@ -138,9 +179,7 @@ Use `pull` instead of `new` to download the weights in advance. The included Qwe
 
 Containers are named `vllm-<model>-g<GPUs>` (e.g. `vllm-qwen3-8b-g0`), so different models, or the same model on different GPUs, can run side by side.
 
----
-
-## 5. Model Management
+## Model management
 
 ### Adding a model
 
@@ -224,9 +263,7 @@ Omni 0.29 rejects global `--served-model-name` for this pipeline, so the launche
 
 A running model cannot be removed. Weights are kept if another config uses the same weights, or if the weight folder is not directly under `MODELS_DIR` or `HF_CACHE_DIR`.
 
----
-
-## 6. GPU Memory Planning
+## GPU memory planning
 
 ### How much a model needs
 
@@ -260,87 +297,49 @@ Before starting, the free memory of the target GPUs is checked; if it is not eno
 * Other processes: actual use.
 * `SAFETY_MIB` (default 2 GiB) is kept free on every GPU as a margin.
 
----
+## Configuration
 
-## 7. Web Console (vLLM Control)
+You do not need to edit files by hand. `./vllm configure` asks the setup questions again, and the console's **System → Server settings** changes every value below. Serving settings apply to the next model you start; console settings (port, bind address, cookie) apply after a console restart, which the page offers to do.
 
-`server/` is a FastAPI web console. Every action calls `./vllm`, so the same rules apply as on the command line.
+The values are stored in two files that Git ignores:
 
-* Full-width layout with a collapsible sidebar and a mobile menu.
-* Light / dark / system theme and a compact mode.
-* Card / list view for models, selectable from the dashboard or display settings and saved per browser. GPU monitoring keeps its card layout in both modes.
-* Settings for the GPU push interval (1 · 2 · 5 · 10 · 30 s), the model / job refresh interval (2 · 5 · 10 · 30 s), pausing GPU updates, and showing temperature / power.
-* Start, restart, stop and delete vLLM and Omni models; engine and deployment profile labels with per-GPU fit checks before starting.
-* Model download with byte-level progress, speed, ETA, and a confirmation for models that will not fit.
-* Live memory, utilization, temperature and power for the GPUs selected by `GPU_COUNT` / `GPU_IDS`.
-* Start-up progress by stage (weight loading, compile, CUDA graph capture…) and live logs.
-* Username / password login.
+**`.env` (model serving)**
 
-Jobs run in processes separate from the web server, and their records and logs are stored in `server/data/jobs/`. Restarting the web server does not interrupt running downloads or start-ups, and every device and browser sees the same state.
+| Key | Meaning |
+|---|---|
+| `MODELS_DIR` | Folder for downloaded weights, mounted as `/models` in the containers |
+| `HF_CACHE_DIR` | Where models referenced by repo id are downloaded automatically |
+| `VLLM_CACHE_DIR` | Compile cache; makes later starts faster |
+| `GPU_IDS` / `GPU_COUNT` | GPUs to use: a list such as `0,2`, or the first N. Both empty = all |
+| `PORT_BASE` | Model port = `PORT_BASE` + index of the model's first GPU |
+| `BIND_ADDR` | `0.0.0.0` to accept outside connections on model ports, `127.0.0.1` for this host only |
+| `VLLM_IMAGE` | Base vLLM image |
+| `VLLM_AUDIO_IMAGE` | Optional image with `vllm[audio]`, built automatically; used for regular models when set |
+| `VLLM_OMNI_IMAGE` | Optional vLLM-Omni image, built automatically; empty disables Omni |
+| `KV_CONCURRENCY`, `AUTO_KV_GIB`, `SAFETY_MIB` | Memory planning (see [GPU memory planning](#gpu-memory-planning)) |
 
-Display settings are stored in the browser's local storage and do not affect other devices. Refresh intervals apply to the current WebSocket connection and are restored on reconnect. Pausing GPU updates still shows the initial state once on connect, and the server keeps reading the GPUs internally for fit checks. Changing settings does not cancel an open job log subscription.
+**`server/.env` (web console)**
 
-### 1) Docker permission
+| Key | Meaning |
+|---|---|
+| `ADMIN_USERNAME`, `ADMIN_PASS_HASH` | Admin login. The password is stored as a PBKDF2 hash |
+| `SESSION_SECRET`, `SESSION_DAYS` | Session cookie signing key and lifetime |
+| `HOST`, `PORT` | Console bind address and port |
+| `COOKIE_SECURE` | `true` sends the session cookie over HTTPS only |
+| `MODEL_PUBLIC_URL_<port>` | Public address for a model port, used by Copy URL and the connection examples |
 
-The console must be able to use docker without sudo. Add the user that runs it to the `docker` group:
+## Security
 
-```bash
-sudo usermod -aG docker $USER
-```
+The console controls Docker on the host, so treat its login like a root password.
 
-Group changes apply to new login sessions. To use it without logging in again, run the following commands with `sg docker -c "..."`.
+* Every page and API route except the sign-in page requires a session. Passwords are stored as PBKDF2 hashes; sessions are signed cookies (`HttpOnly`, `SameSite=Strict`), and changing the password signs out other devices.
+* **Passkeys**: add one under Preferences → Passkeys and sign in with the device's fingerprint, face or PIN instead of the password. A passkey on a phone can sign in a desktop browser through the browser's QR code. Browsers only allow passkeys over HTTPS (or on `localhost`), and a passkey is bound to the address it was created on. Adding one asks for the password again; only public keys are stored (`server/data/passkeys.json`).
+* Sign-in is rate-limited per address. Cross-origin requests and WebSocket connections are refused. The FastAPI docs endpoints are disabled, and responses carry a strict Content-Security-Policy.
+* First-run setup requires a one-time token printed in the server log, so an open port cannot be claimed by someone else.
+* **Use HTTPS when the console is reachable from other networks.** Put it behind a reverse proxy or a tunnel (nginx, Caddy, Tailscale, Cloudflare Tunnel), then turn on **Secure cookie** in System → Server settings.
+* Model ports are separate from the console. Create an API key (System → API key, or `./vllm key new`) so that model servers only answer requests with `Authorization: Bearer <key>`.
 
-### 2) Environment and account
-
-```bash
-cp server/.env.example server/.env
-```
-
-The startup script prepares the Python environment with `uv sync`. Set the login account and session key in `server/.env`. Behind an HTTPS proxy the session cookie is `Secure`; only expose the console to the outside through an HTTPS proxy.
-
-| Key | Description | Default |
-|---|---|---|
-| `ADMIN_USERNAME` | Login user name | (required) |
-| `ADMIN_PASSWORD` | A strong login password | (required) |
-| `SESSION_SECRET` | Signing key that keeps sessions across restarts. Generate with `python3 -c "import secrets; print(secrets.token_hex(32))"`. Empty means everyone is logged out on restart. | random |
-| `SESSION_DAYS` | How long a login lasts (days) | `14` |
-| `COOKIE_SECURE` | Send the session cookie over HTTPS only. Set `false` only for local HTTP development. | `true` |
-| `PORT` | Web server port | `8000` |
-| `HOST` | Bind address. `127.0.0.1` allows access from the server only. | `0.0.0.0` |
-| `MODEL_PUBLIC_URL_<port>` | What "copy address" copies for that model port, e.g. `MODEL_PUBLIC_URL_8000=llm0.example.com/v1` | `http://<current host>:<port>/v1` |
-
-The copy-address value is used exactly as written. Restart the console and reload the page after changing it.
-
-> **Note** The console's default `PORT` 8000 is the same as the default model port (`PORT_BASE` in the root `.env`). If models run on the same server, pick another port such as `8021`. Swagger UI (`/docs`), ReDoc (`/redoc`) and the OpenAPI schema (`/openapi.json`) are disabled.
-
-### 3) Run
-
-```bash
-# Foreground: prepare Python dependencies and serving images, then start the console
-bash server/start.sh
-
-# Keep it running with PM2
-pm2 start ecosystem.config.js
-pm2 save
-pm2 logs vllm
-```
-
-Startup runs `uv sync` followed by `./vllm setup`, streaming environment checks, image downloads, and Omni builds to the terminal and PM2 logs. The web server starts after preparation succeeds. Existing images are reused, and a lock prevents simultaneous setup processes from building the same images. Calling `server/run.py` directly also runs image preparation. Model weights are downloaded by `pull` or on the first model start, separately from image setup.
-
-`ecosystem.config.js` restarts the console when `server/app/`, `run.py`, `start.sh`, `server/.env` or the root `.env` changes. Without PM2, restart the console after editing the root `.env`.
-
-> **Important** Apps started by PM2 inherit the permissions of the PM2 daemon. A daemon that was already running before you joined the `docker` group cannot reach docker, and neither can the console. Restart the daemon with the new permissions (this restarts the other PM2 apps too):
->
-> ```bash
-> pm2 save                                   # save the current app list
-> sg docker -c "pm2 kill && pm2 resurrect"   # restart the daemon with docker access and restore the apps
-> ```
-
-If initial environment preparation fails, the error is printed and the console exits with code 78. PM2 does not automatically restart this exit code; fix the cause and restart the app. Docker access must be available without an interactive sudo prompt.
-
----
-
-## 8. API Authentication
+## API authentication
 
 ```bash
 ./vllm key new    # create a key and store it in api-key.env (mode 600)
@@ -352,9 +351,7 @@ The key applies to servers started with `./vllm up` after the change. Clients mu
 
 > **Security note** vLLM's API key only protects the `/v1`, `/v2`, `/inference` and `/cohere` paths. `/invocations`, `/pooling`, `/score`, `/pause`, `/abort_requests` and others stay open ([vLLM security docs](https://docs.vllm.ai/en/latest/usage/security.html#api-key-authentication-limitations)). When exposing models publicly, set `BIND_ADDR=127.0.0.1` in the root `.env` and put a reverse proxy in front that forwards only `/v1`.
 
----
-
-## 9. Connecting Clients
+## Connecting clients
 
 Both engines provide OpenAI-compatible chat APIs under `/v1`, including `/v1/chat/completions`. For vLLM, use `served-model-name` if configured; for Omni, use the config's `model` value. Query `/v1/models` to confirm the actual names. API compatibility does not imply support for every OpenAI endpoint or identical audio/video response handling.
 
@@ -419,33 +416,7 @@ For models without tool calling support, disable tool use in the client and omit
 
 For models served at a fixed address through a reverse proxy or gateway, pin the port with `-p`. Otherwise the port is whichever one is free at start time.
 
----
-
-## 10. Configuration Reference
-
-Keys in the root `.env`:
-
-| Key | Description | Default |
-|---|---|---|
-| `VLLM_IMAGE` | Base vLLM Docker image | `vllm/vllm-openai:v0.29.0-cu129` |
-| `VLLM_AUDIO_IMAGE` | Regular vLLM serving image with `vllm[audio]`; built automatically when missing. Empty uses the base image directly. | `local/vllm-audio:0.29.0-cu129` |
-| `VLLM_OMNI_IMAGE` | Omni image to build and reuse; empty skips Omni setup | `local/vllm-omni:0.29.0-cu129` |
-| `MODELS_DIR` | Model weights. Mounted read-only as `/models` in the container. | `/mnt/disk/vllm` |
-| `HF_CACHE_DIR` | Cache used when a config's `model` is a HF repo id | `/mnt/disk/vllm/hf-cache` |
-| `VLLM_CACHE_DIR` | torch.compile / CUDA graph cache; makes restarts faster | `/mnt/disk/vllm/vllm-cache` |
-| `GPU_COUNT` | Number of GPUs to use, starting from the lowest index | `2` |
-| `GPU_IDS` | GPU indices to use (e.g. `0,2`); takes precedence over `GPU_COUNT` | (empty) |
-| `PORT_BASE` | First model server port | `8000` |
-| `BIND_ADDR` | Bind address of the model server ports | `0.0.0.0` |
-| `KV_CONCURRENCY` | Concurrent requests used for KV cache sizing | `4` |
-| `AUTO_KV_GIB` | KV cache limit (GiB) for `max-model-len: auto` | `16` |
-| `SAFETY_MIB` | Memory kept free on every GPU (MiB) | `2048` |
-
-If a Hugging Face token exists (`~/.cache/huggingface/token`), it is mounted read-only into the container for gated model downloads.
-
----
-
-## 11. Engine Versions
+## Engine versions
 
 Pin the vLLM version with `VLLM_IMAGE` in the root `.env`; avoid the `latest` tag.
 
@@ -464,55 +435,33 @@ Run `./vllm omni-build` to rebuild the configured Omni tag after changing the Do
 
 After changing the version, check that the log lines used by the start-up progress tracker (`server/app/services/progress.py`) have not changed.
 
----
-
-## 12. Troubleshooting
+## Troubleshooting
 
 | Symptom | Cause and fix |
 |---|---|
 | `Unable to find image ... locally` | The image is being pulled automatically. The first start takes a few minutes. |
-| `RuntimeError: operator torchvision::nms does not exist` | torch and torchvision in the image do not match. Use the recommended tag in [Engine Versions](#11-engine-versions). |
+| `RuntimeError: operator torchvision::nms does not exist` | torch and torchvision in the image do not match. Use the recommended tag in [Engine versions](#engine-versions). |
 | Start refused for lack of space | Choose other GPUs (`-g`), free memory with `./vllm down`, or lower `max-model-len` in the config. |
 | `502 Bad Gateway` from a gateway | No model server is on the port the gateway forwards to. Pin the port with `-p`. |
-| Setup stops because Docker is not reachable | Check the [Docker permission](#1-docker-permission) step and the PM2 daemon permissions, then restart the app. |
-| Console exits with code 78 | Environment preparation failed. Read the setup / build output in `pm2 logs vllm`, fix the cause, and restart. |
+| The console shows "Docker is not reachable" | Add the account to the `docker` group (`sudo usermod -aG docker $USER`), sign in again, and restart the console. Under PM2, the PM2 daemon itself must be restarted with the new group. |
+| "Preparing the runtime failed" banner | An image could not be pulled or built. Read the output in `./vllm server logs`, fix the cause, then press Try again. |
+| Cannot sign in over plain HTTP | **Secure cookie** is on, so the browser withholds the session cookie. Turn it off in System → Server settings (or set `COOKIE_SECURE=false` in `server/.env`) until the console is behind HTTPS. |
 | Omni startup stays at `Using model weights format` | First startup can download large weights without a progress bar in that log. Check the HF cache for growing `.incomplete` files. |
 | `User-specified max_model_len ... greater than ...` | Keep the context within the model/tokenizer limit or use `max-model-len: auto`. |
 | `auto` tool choice requires a parser | Disable tool use for models without tool calling support; omit `tools` and `tool_choice`. |
 | Repeated `KeyboardInterrupt` in the PM2 log during start-up | PM2 watch restarts on `__pycache__` changes. Use the repository's `ecosystem.config.js` (`watch`, `ignore_watch`). |
 
----
+## Project structure
 
-## 13. Project Structure
-
+```text
+vllm                  CLI: model lifecycle, console control, doctor, update
+install.sh            one-line installer
+tools/setup.py        setup questions (writes .env and server/.env)
+tools/demo.py         demo mode
+lib/                  memory planning, config generation, GPU accounting
+docker/               Dockerfiles for the audio and Omni images
+deploy/               Omni stage deployment profiles and config examples
+models/               your model configs (not tracked by Git)
+server/               web console (FastAPI, plain ES modules, no build step)
+docs/                 project website (GitHub Pages)
 ```
-vllm                       CLI
-.env.example               Example root .env
-.env                       Local vLLM / Omni settings (not tracked)
-ecosystem.config.js        PM2 config for the web console
-lib/
-  plan.py                  Memory planning
-  gpufree.py               Free memory per GPU
-  gen-config.py            Model config generation
-  launch-config.py         Runtime config without duplicate planned options
-  localize-config.py       Point matching repository configs at downloaded weights
-deploy/                    vLLM / Omni model config examples and Omni stage profiles
-docker/
-  omni.Dockerfile          CUDA-compatible Omni image build
-  audio.Dockerfile         Regular vLLM image with audio decoding support
-models/                    Model configs (not tracked)
-server/                    Web console (FastAPI, uv)
-  start.sh                 uv environment setup and startup
-  run.py                   Serving image preparation and web server
-  pyproject.toml           Python dependencies
-  uv.lock                  Locked dependency versions
-  .env.example
-  app/
-    routes/                Pages, auth, model API, WebSocket
-    services/              Docker, GPUs, models, jobs, download / start-up progress
-    templates/
-    static/
-static/imgs/               README screenshots
-```
-
-Not tracked by Git: `models/*.yaml`, `api-key.env`, `.env`, `server/.env`, `server/.venv/`, `server/data/`.

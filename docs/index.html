@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vLLM Manager — run and manage vLLM model servers from a browser</title>
+<meta name="description" content="A self-hosted web console and CLI for vLLM and vLLM-Omni on your own GPU server. Download models, check they fit before they start, watch GPU memory per model, test responses, and serve OpenAI-compatible APIs.">
+<meta property="og:title" content="vLLM Manager — a web console for your GPU server">
+<meta property="og:description" content="Download, fit-check, start and monitor vLLM model servers from any browser. One install command.">
+<meta property="og:image" content="https://www.yojun.dev/vllm-manager/assets/screens/desktop-dashboard.png">
+<meta property="og:type" content="website">
+<meta name="theme-color" content="#0a0d14">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<style>
+  :root { --bg: #0a0d14; --bg-2: #0e131d; --card: #121824; --line: #1f2838; --text: #e8ecf4; --muted: #98a4b8; --accent: #7696ff; --accent-2: #a78bfa; --ok: #3ddc97; --radius: 16px; --max: 1140px; }
+  @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) { --bg: #f5f7fb; --bg-2: #edf1f8; --card: #ffffff; --line: #dbe2ee; --text: #131a2a; --muted: #55627a; --accent: #3a5bd9; --accent-2: #6d4fd6; --ok: #06805a; } }
+  :root[data-theme="light"] { --bg: #f5f7fb; --bg-2: #edf1f8; --card: #ffffff; --line: #dbe2ee; --text: #131a2a; --muted: #55627a; --accent: #3a5bd9; --accent-2: #6d4fd6; --ok: #06805a; }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; scroll-padding-top: 76px; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+  a { color: inherit; }
+  img { max-width: 100%; height: auto; display: block; }
+  code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .wrap { max-width: var(--max); margin: 0 auto; padding: 0 20px; }
+  .grad { background: linear-gradient(90deg, var(--accent), var(--accent-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  header { position: sticky; top: 0; z-index: 10; backdrop-filter: blur(12px); background: color-mix(in srgb, var(--bg) 84%, transparent); border-bottom: 1px solid var(--line); }
+  .nav { display: flex; align-items: center; gap: 20px; height: 60px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 750; font-size: 18px; text-decoration: none; letter-spacing: -.01em; }
+  .brand img { width: 30px; height: 30px; border-radius: 8px; }
+  .nav nav { margin-left: auto; display: flex; align-items: center; gap: 22px; font-size: 14px; color: var(--muted); }
+  .nav nav a { text-decoration: none; }
+  .nav nav a:hover { color: var(--text); }
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px; border-radius: 11px; font-weight: 650; font-size: 14px; text-decoration: none; border: 1px solid var(--line); background: var(--card); cursor: pointer; color: var(--text); font-family: inherit; }
+  .btn.primary { border: 0; color: #fff; background: linear-gradient(90deg, #5b7df0, #8466e8); }
+  .btn.small { padding: 7px 12px; font-size: 13px; }
+  @media (max-width: 760px) { .nav nav a:not(.btn) { display: none; } }
+  .hero { padding: 76px 0 30px; text-align: center; background: radial-gradient(900px 420px at 50% -10%, color-mix(in srgb, var(--accent) 20%, transparent), transparent 70%); }
+  .eyebrow { display: inline-flex; gap: 8px; align-items: center; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); font-size: 12.5px; color: var(--muted); font-weight: 600; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+  h1 { font-size: clamp(34px, 6vw, 58px); line-height: 1.08; letter-spacing: -.03em; margin: 22px auto 16px; max-width: 900px; text-wrap: balance; }
+  .lead { font-size: clamp(16px, 2.2vw, 19px); color: var(--muted); max-width: 740px; margin: 0 auto; text-wrap: pretty; }
+  .install { margin: 30px auto 0; max-width: 800px; display: flex; align-items: center; gap: 10px; padding: 12px 12px 12px 18px; border-radius: 14px; border: 1px solid var(--line); background: var(--bg-2); text-align: left; }
+  .install code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; font-size: 14px; scrollbar-width: none; }
+  .install code::before { content: "$ "; color: var(--muted); }
+  .cta { margin-top: 18px; display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+  .note { margin-top: 14px; font-size: 13px; color: var(--muted); }
+  .shot { margin: 44px auto 0; border-radius: 16px; overflow: hidden; border: 1px solid var(--line); box-shadow: 0 30px 80px rgba(0, 0, 0, .4); background: var(--card); }
+  .shot img { aspect-ratio: 16 / 10; width: 100%; }
+  section { padding: 78px 0; }
+  section.alt { background: var(--bg-2); border-block: 1px solid var(--line); }
+  h2 { font-size: clamp(26px, 4vw, 38px); letter-spacing: -.02em; line-height: 1.15; margin: 0 0 12px; text-wrap: balance; }
+  .sub { color: var(--muted); max-width: 700px; margin: 0 0 36px; text-wrap: pretty; }
+  .center { text-align: center; } .center .sub { margin-inline: auto; }
+  .chips { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 26px; }
+  .chip { padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); font-size: 13px; font-weight: 650; color: var(--muted); }
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(3, 1fr); }
+  @media (max-width: 900px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 600px) { .grid { grid-template-columns: 1fr; } }
+  .grid > *, .steps > *, .split > * { min-width: 0; }
+  .card { padding: 22px; border-radius: var(--radius); border: 1px solid var(--line); background: var(--card); }
+  .card h3 { margin: 0 0 8px; font-size: 17px; letter-spacing: -.01em; }
+  .card p { margin: 0; color: var(--muted); font-size: 14.5px; text-wrap: pretty; }
+  .icon { width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; margin-bottom: 14px; color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent); }
+  .icon svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .split { display: grid; gap: 44px; grid-template-columns: 1fr 1.15fr; align-items: center; }
+  .split.flip > :first-child { order: 2; }
+  .split + .split { margin-top: 72px; }
+  @media (max-width: 900px) { .split, .split.flip { grid-template-columns: 1fr; gap: 26px; } .split.flip > :first-child { order: 0; } }
+  .split h3 { font-size: clamp(22px, 3vw, 28px); letter-spacing: -.02em; line-height: 1.2; margin: 0 0 10px; }
+  .split p { color: var(--muted); margin: 0; }
+  .split ul { padding: 0; margin: 18px 0 0; list-style: none; display: grid; gap: 10px; }
+  .split li { padding-left: 26px; position: relative; color: var(--muted); }
+  .split li::before { content: "✓"; position: absolute; left: 0; color: var(--ok); font-weight: 800; }
+  .frame { border-radius: 14px; overflow: hidden; border: 1px solid var(--line); box-shadow: 0 24px 60px rgba(0, 0, 0, .35); }
+  .frame img { aspect-ratio: 16 / 10; width: 100%; }
+  .phones { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; margin-top: 8px; }
+  @media (max-width: 760px) { .phones { grid-template-columns: repeat(2, 1fr); } }
+  .phone { border-radius: 22px; overflow: hidden; border: 1px solid var(--line); box-shadow: 0 20px 50px rgba(0, 0, 0, .35); }
+  .phone img { aspect-ratio: 390 / 844; width: 100%; }
+  .steps { display: grid; gap: 16px; grid-template-columns: repeat(4, 1fr); counter-reset: step; }
+  @media (max-width: 900px) { .steps { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { .steps { grid-template-columns: 1fr; } }
+  .steps .card::before { counter-increment: step; content: counter(step); display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; font-weight: 800; font-size: 14px; margin-bottom: 12px; color: #fff; background: linear-gradient(90deg, #5b7df0, #8466e8); }
+  pre { margin: 0; padding: 16px 18px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); overflow-x: auto; font-size: 13.5px; line-height: 1.7; }
+  pre .c { color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+  th, td { text-align: left; padding: 11px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 13px; }
+  td code { font-size: 13px; background: var(--bg-2); padding: 2px 6px; border-radius: 6px; white-space: nowrap; }
+  .table-wrap { overflow-x: auto; }
+  details { border: 1px solid var(--line); border-radius: 12px; background: var(--card); padding: 14px 18px; }
+  details + details { margin-top: 10px; }
+  summary { cursor: pointer; font-weight: 650; }
+  details p { color: var(--muted); margin: 10px 0 2px; }
+  footer { padding: 34px 0 44px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
+  footer .wrap { display: flex; gap: 16px; justify-content: space-between; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<header><div class="wrap nav">
+  <a class="brand" href="#top"><img src="assets/favicon.svg" alt="">vLLM Manager</a>
+  <nav><a href="#features">Features</a><a href="#tour">Tour</a><a href="#install">Install</a><a href="#faq">FAQ</a>
+    <button class="btn small" id="theme" type="button" aria-label="Switch light and dark">◐</button>
+    <a class="btn small" href="https://github.com/yojun313/vllm-manager">GitHub</a></nav>
+</div></header>
+
+<main id="top">
+<div class="hero"><div class="wrap">
+  <span class="eyebrow"><span class="dot"></span>Self-hosted · vLLM and vLLM-Omni · OpenAI-compatible</span>
+  <h1>Run your GPU server's models <span class="grad">from a browser</span></h1>
+  <p class="lead">vLLM Manager is a web console and CLI for serving models with vLLM on your own NVIDIA hardware. Download a model, see whether it fits before it starts, watch what each GPU is holding, and test the answer, without writing a Docker command.</p>
+  <div class="install"><code id="cmd">curl -fsSL https://raw.githubusercontent.com/yojun313/vllm-manager/main/install.sh | sh</code><button class="btn small" id="copy" type="button">Copy</button></div>
+  <div class="cta"><a class="btn primary" href="#install">Install guide</a><a class="btn" href="https://github.com/yojun313/vllm-manager">View on GitHub</a></div>
+  <p class="note">Linux · NVIDIA GPU · Docker with the NVIDIA Container Toolkit. The installer never uses sudo.</p>
+  <div class="shot"><img src="assets/screens/desktop-dashboard.png" alt="Dashboard: GPU memory per model, utilisation, running models and their throughput" width="2880" height="1800"></div>
+  <div class="chips"><span class="chip">Text</span><span class="chip">Vision</span><span class="chip">Audio</span><span class="chip">Speech output (Omni)</span><span class="chip">Embeddings</span><span class="chip">English · 한국어</span></div>
+</div></div>
+
+<section id="features"><div class="wrap">
+  <div class="center"><h2>Everything between "I have GPUs" and "the API answers"</h2>
+  <p class="sub">Each model runs in its own container on its own port. The console plans the memory, starts and stops the containers, and shows you what is going on.</p></div>
+  <div class="grid">
+    <div class="card"><div class="icon"><svg viewBox="0 0 24 24"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg></div><h3>Download with a fit check</h3><p>Search Hugging Face from the console. Before a byte is downloaded you see whether the model fits on one GPU, needs several, or cannot run on this server at all.</p></div>
+    <div class="card"><div class="icon"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><circle cx="9" cy="12" r="2.5"/><path d="M15 10h2M15 14h2"/></svg></div><h3>Memory planned per model</h3><p>Weights, KV cache and headroom are estimated from the model's architecture, so several models can share a GPU. A start is refused when the reservation would not fit.</p></div>
+    <div class="card"><div class="icon"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></div><h3>Live GPU and model metrics</h3><p>Memory per model and per outside process, utilisation, temperature and power. Tokens per second, queue depth and time to first token for every running model, with 24 hours of history.</p></div>
+    <div class="card"><div class="icon"><svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z"/></svg></div><h3>Playground</h3><p>Send a message to any running model and read the streamed answer with its speed. Copy a ready curl, Python or JavaScript snippet for the same endpoint.</p></div>
+    <div class="card"><div class="icon"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h13"/></svg></div><h3>Start-up you can follow</h3><p>Weight loading, compilation and CUDA graph capture appear as one progress bar with the live log beside it. Jobs keep running if the console restarts.</p></div>
+    <div class="card"><div class="icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/></svg></div><h3>No config files to edit</h3><p>The installer asks a few questions with detected defaults. After that, storage paths, GPUs, ports, images, the API key and the admin password are all changed in the console.</p></div>
+  </div>
+</div></section>
+
+<section class="alt" id="tour"><div class="wrap">
+  <div class="split">
+    <div><h3>A library that knows your hardware</h3><p>Every model shows the memory it needs per GPU and how that splits into weights, KV cache and headroom.</p>
+      <ul><li>Pick GPUs yourself or let the console choose the emptiest</li><li>Combinations that would not fit are struck out before you click</li><li>Edit the model's vLLM config in place; the previous version is kept</li><li>vLLM and vLLM-Omni models side by side</li></ul></div>
+    <div class="frame"><img src="assets/screens/desktop-models.png" alt="Model library with memory plan and GPU selection" width="2880" height="1800" loading="lazy"></div>
+  </div>
+  <div class="split flip">
+    <div><h3>See where the time and memory go</h3><p>The server keeps a rolling history, so the charts are already filled in when you open the page.</p>
+      <ul><li>Utilisation, memory, temperature and power per GPU</li><li>Generation speed and concurrent requests per model</li><li>Which process owns GPU memory, including ones this tool did not start</li></ul></div>
+    <div class="frame"><img src="assets/screens/desktop-monitor.png" alt="Monitoring charts for GPUs and models" width="2880" height="1800" loading="lazy"></div>
+  </div>
+  <div class="split">
+    <div><h3>Check the answer before you hand out the URL</h3><p>The playground talks to the model through the console, so the API key never reaches the browser.</p>
+      <ul><li>Streaming output with reasoning shown separately</li><li>Time to first token, tokens per second and token counts</li><li>Connection snippets with your public address filled in</li></ul></div>
+    <div class="frame"><img src="assets/screens/desktop-playground.png" alt="Playground with a streamed answer and API example" width="2880" height="1800" loading="lazy"></div>
+  </div>
+  <div class="split flip">
+    <div><h3>Settings live in the console</h3><p>The System page checks the install and holds every server setting.</p>
+      <ul><li>Storage folders, GPUs to use, ports and runtime images</li><li>Create, rotate or turn off the model API key</li><li>Install checks that say what is missing and how to fix it</li><li>Update notice and one-click console restart</li></ul></div>
+    <div class="frame"><img src="assets/screens/desktop-system.png" alt="System page with host details, checks and server settings" width="2880" height="1800" loading="lazy"></div>
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <div class="center"><h2>The same console on a phone</h2><p class="sub">One responsive web app with a tab bar on small screens. Light and dark themes, English and Korean.</p></div>
+  <div class="phones">
+    <div class="phone"><img src="assets/screens/mobile-dashboard.png" alt="Dashboard on a phone" loading="lazy"></div>
+    <div class="phone"><img src="assets/screens/mobile-models.png" alt="Models on a phone" loading="lazy"></div>
+    <div class="phone"><img src="assets/screens/mobile-monitor.png" alt="Monitoring on a phone" loading="lazy"></div>
+    <div class="phone"><img src="assets/screens/mobile-playground.png" alt="Playground on a phone" loading="lazy"></div>
+  </div>
+</div></section>
+
+<section class="alt" id="install"><div class="wrap">
+  <h2>Install</h2>
+  <p class="sub">You need a Linux host with an NVIDIA driver, Docker, and the NVIDIA Container Toolkit. The installer checks all three and tells you the exact command for anything missing.</p>
+  <div class="steps">
+    <div class="card"><h3>Run the installer</h3><p>It installs uv into your home folder, downloads vLLM Manager into <code>~/vllm-manager</code> and sets up the console's Python environment.</p></div>
+    <div class="card"><h3>Answer a few questions</h3><p>Model folder, GPUs, console port and an admin login. Every question has a detected default; press Enter to accept it.</p></div>
+    <div class="card"><h3>Open the console</h3><p>The address is printed at the end. The runtime image is downloaded in the background while you look around.</p></div>
+    <div class="card"><h3>Add a model</h3><p>Models → Add model, type a Hugging Face name, check the fit, download, then press Run.</p></div>
+  </div>
+  <div style="margin-top:28px"><pre><span class="c"># install and start</span>
+curl -fsSL https://raw.githubusercontent.com/yojun313/vllm-manager/main/install.sh | sh
+
+<span class="c"># afterwards</span>
+~/vllm-manager/vllm server status      <span class="c"># is the console running, and where</span>
+~/vllm-manager/vllm server enable      <span class="c"># start it at boot (systemd user service)</span>
+~/vllm-manager/vllm doctor             <span class="c"># check the install</span>
+~/vllm-manager/vllm update             <span class="c"># get the latest version</span>
+~/vllm-manager/vllm configure          <span class="c"># run the setup questions again</span></pre></div>
+  <p class="note">No GPU at hand? <code>~/vllm-manager/vllm demo</code> starts the console on simulated GPUs with sample models. The screenshots on this page come from it.</p>
+  <h3 style="margin:44px 0 12px;font-size:20px">The CLI does everything the console does</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Command</th><th>What it does</th></tr>
+    <tr><td><code>./vllm pull Qwen/Qwen3-8B</code></td><td>Check the fit, download the model and write its config</td></tr>
+    <tr><td><code>./vllm up qwen3-8b -g 0</code></td><td>Start it on GPU 0 (leave <code>-g</code> out to pick the emptiest GPU)</td></tr>
+    <tr><td><code>./vllm ps</code></td><td>Running servers and the memory left on each GPU</td></tr>
+    <tr><td><code>./vllm logs qwen3-8b</code></td><td>Follow a server's log</td></tr>
+    <tr><td><code>./vllm down qwen3-8b</code></td><td>Stop it</td></tr>
+    <tr><td><code>./vllm key new</code></td><td>Turn on API key authentication for the model servers</td></tr>
+  </table></div>
+</div></section>
+
+<section id="faq"><div class="wrap">
+  <h2>Questions</h2><p class="sub"></p>
+  <details><summary>Does it replace vLLM?</summary><p>No. It runs the official vLLM image (and a vLLM-Omni image for speech-capable models) in Docker and manages those containers. Clients talk to vLLM's own OpenAI-compatible API directly.</p></details>
+  <details><summary>Which models can it serve?</summary><p>Whatever the vLLM version in your image supports: text, vision, audio input and embedding models, plus Qwen3-Omni through vLLM-Omni. The image tag is a setting, so you choose the version.</p></details>
+  <details><summary>Is it safe to expose?</summary><p>The console requires a login (PBKDF2-hashed password, signed session cookie, rate-limited sign-in, cross-origin requests refused, no API docs endpoint). It controls Docker on the host, so put it behind HTTPS and turn on the secure cookie before opening it to the internet. Model ports are protected separately by the API key.</p></details>
+  <details><summary>Other people use the same GPUs. Does it cope?</summary><p>Yes. Memory used by processes it did not start is measured and subtracted before a model is placed, and those processes are listed by name, user and PID.</p></details>
+  <details><summary>How do I remove it?</summary><p>Stop the models (<code>./vllm down</code>) and the console (<code>./vllm server down</code>), then delete <code>~/vllm-manager</code>. Model weights stay in the folder you chose until you delete them.</p></details>
+</div></section>
+</main>
+
+<footer><div class="wrap"><span>vLLM Manager · built on <a href="https://github.com/vllm-project/vllm">vLLM</a>, Docker, FastAPI and uv</span><a href="https://github.com/yojun313/vllm-manager">github.com/yojun313/vllm-manager</a></div></footer>
+<script>
+  (function () {
+    var root = document.documentElement, saved = null;
+    try { saved = localStorage.getItem('vm-site-theme'); } catch (e) {}
+    if (saved) root.dataset.theme = saved;
+    document.getElementById('theme').onclick = function () {
+      var dark = root.dataset.theme ? root.dataset.theme === 'dark' : !matchMedia('(prefers-color-scheme: light)').matches;
+      root.dataset.theme = dark ? 'light' : 'dark';
+      try { localStorage.setItem('vm-site-theme', root.dataset.theme); } catch (e) {}
+    };
+    var btn = document.getElementById('copy');
+    btn.onclick = function () {
+      navigator.clipboard.writeText(document.getElementById('cmd').textContent).then(function () {
+        btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = 'Copy'; }, 1600);
+      });
+    };
+  })();
+</script>
+</body>
+</html>

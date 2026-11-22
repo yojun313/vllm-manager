@@ -71,10 +71,13 @@ def parse(text: str, healthy: bool = False) -> dict:
             "pct": 100,
             "detail": "",
             "error": "",
+            "sub": None,
+            "info": None,
         }
     stage = None
     sub_pct = None
     detail = ""
+    info = None
     error = ""
     for raw in text.splitlines():
         # tqdm 진행률은 한 줄 안에 \r 로 여러 번 덮어쓰므로 마지막 조각만 본다
@@ -98,9 +101,11 @@ def parse(text: str, healthy: bool = False) -> dict:
         m = re.search(r"Model loading took ([\d.]+) GiB", line)
         if m:
             detail = f"가중치 {m.group(1)} GiB 로딩 완료"
+            info = {"k": "weights", "v": m.group(1)}
         m = re.search(r"GPU KV cache size: ([\d,]+) tokens", line)
         if m:
             detail = f"KV 캐시 {m.group(1)} 토큰"
+            info = {"k": "kv", "v": m.group(1)}
         if _ERROR.search(line) and "WARNING" not in line:
             error = line[-300:]
     if stage is None:
@@ -110,6 +115,8 @@ def parse(text: str, healthy: bool = False) -> dict:
             "pct": 1,
             "detail": detail,
             "error": error,
+            "sub": None,
+            "info": info,
         }
     k, name, s, e = stage
     pct = (
@@ -123,4 +130,6 @@ def parse(text: str, healthy: bool = False) -> dict:
         "pct": round(min(pct, 99), 1),
         "detail": detail,
         "error": error,
+        "sub": sub_pct,
+        "info": info,
     }

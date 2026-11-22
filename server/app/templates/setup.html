@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block body_class %}login{% endblock %}
+{% block body %}
+<main class="login-wrap">
+  <div class="login-card">
+    <div class="login-head">
+      <img class="login-icon" src="/icons/server.svg" alt="" width="56" height="56">
+      <h1 data-i18n="setup.title"></h1>
+      <p data-i18n="setup.sub"></p>
+    </div>
+    <form id="setupForm" autocomplete="off">
+      <label class="field" id="tokenField"><span data-i18n="setup.token"></span>
+        <input class="input mono" id="token" autocapitalize="off" spellcheck="false" required></label>
+      <label class="field"><span data-i18n="login.username"></span>
+        <input class="input" id="username" autocomplete="username" autocapitalize="off" spellcheck="false" value="admin" required></label>
+      <label class="field"><span data-i18n="setup.password"></span>
+        <span class="input-wrap"><input class="input" id="password" type="password" autocomplete="new-password" required>
+          <button class="input-btn" type="button" data-reveal="password" tabindex="-1"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg></button></span></label>
+      <label class="field"><span data-i18n="setup.password2"></span>
+        <input class="input" id="password2" type="password" autocomplete="new-password" required></label>
+      <button class="btn primary block" type="submit" id="setupBtn" data-i18n="setup.submit"></button>
+      <div class="form-err" id="setupErr" role="alert"></div>
+    </form>
+  </div>
+  <div class="login-foot">
+    <button class="link" type="button" id="langToggle"></button>
+    <span>vLLM Manager v{{ version }}</span>
+  </div>
+</main>
+{% endblock %}
+{% block scripts %}<script type="module" src="/js/login.js?v={{ version }}"></script>{% endblock %}

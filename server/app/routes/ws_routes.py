@@ -39,12 +39,7 @@ async def ws(ws: WebSocket):
 
     async def stream_container_logs(name: str):
         proc = await asyncio.create_subprocess_exec(
-            "docker",
-            "logs",
-            "-f",
-            "--tail",
-            "400",
-            name,
+            *docker.logs_cmd(name),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
@@ -110,6 +105,11 @@ async def ws(ws: WebSocket):
                     if type(config.get("gpu_enabled")) is bool:
                         intervals["gpu_enabled"] = config["gpu_enabled"]
                 continue  # 환경설정 변경으로 열려 있는 로그 구독이 취소되지 않도록 한다
+            if "sub" not in msg:
+                if msg.get("refresh"):  # 구독은 그대로 두고 상태만 다시 받는다
+                    state.invalidate()
+                    await send({"type": "state", **await state.build()})
+                continue
             if log_task:
                 log_task.cancel()
                 log_task = None
@@ -138,6 +138,11 @@ async def ws(ws: WebSocket):
                 )
             marks = {j.id: j.status for j in jobs.all_jobs()}
             if now - last_state >= intervals["state"] or marks != job_marks:
+                if (
+                    marks != job_marks
+                ):  # 작업이 끝난 직후에는 캐시된 상태가 아니라 새 상태를 보낸다
+                    docker.invalidate()
+                    state.invalidate()
                 last_state, job_marks = now, marks
                 await send({"type": "state", **await state.build()})
             if sub["kind"] == "job":

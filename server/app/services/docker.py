@@ -97,3 +97,38 @@ def healthy(port: str) -> bool:
             return r.status == 200
     except Exception:
         return False
+
+
+def logs_cmd(name: str, tail: int = 400) -> list[str]:
+    """실시간 로그 스트림에 쓰는 명령 (데모 모드에서 바꿔 끼운다)."""
+    return ["docker", "logs", "-f", "--tail", str(tail), name]
+
+
+def server_version() -> str:
+    try:
+        r = run(["docker", "version", "--format", "{{.Server.Version}}"], timeout=5)
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def image_info(image: str) -> dict:
+    """로컬에 받아둔 이미지인지와 크기."""
+    if not image:
+        return {"image": "", "present": False, "bytes": 0, "created": ""}
+    try:
+        r = run(
+            ["docker", "image", "inspect", "-f", "{{.Size}}\t{{.Created}}", image],
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return {"image": image, "present": False, "bytes": 0, "created": ""}
+    if r.returncode != 0:
+        return {"image": image, "present": False, "bytes": 0, "created": ""}
+    size, _, created = r.stdout.strip().partition("\t")
+    return {
+        "image": image,
+        "present": True,
+        "bytes": int(size) if size.isdigit() else 0,
+        "created": created[:19],
+    }

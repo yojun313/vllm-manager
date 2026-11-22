@@ -110,8 +110,71 @@ def plan(path: Path, tp: int, total_mib: int) -> dict:
     }
     m = re.search(r"--max-model-len (\d+)", res.get("PLAN_ARGS", ""))
     p["ctx"] = int(m.group(1)) if m else None
+    p["breakdown"] = breakdown(p["desc"])
     _plan_cache[key] = (time.time(), p)
     return p
+
+
+_BREAKDOWN = re.compile(
+    r"가중치 ([\d.]+) \+ KV ([\d.]+) \(([\d,]+)토큰 × 동시 (\d+)\) \+ 여유 ([\d.]+)"
+)
+
+
+def breakdown(desc: str) -> dict:
+    """lib/plan.py 의 설명 문구를 화면에서 번역·시각화할 수 있게 숫자로 풀어낸다."""
+    m = _BREAKDOWN.search(desc)
+    if m:
+        return {
+            "kind": "auto",
+            "weights": float(m.group(1)),
+            "kv": float(m.group(2)),
+            "tokens": int(m.group(3).replace(",", "")),
+            "concurrency": int(m.group(4)),
+            "overhead": float(m.group(5)),
+        }
+    if desc.startswith("수동 설정"):
+        m = re.search(r"=([\d.]+)", desc)
+        return {"kind": "manual", "util": float(m.group(1)) if m else None}
+    if "Omni" in desc or "memory-fraction" in desc:
+        return {"kind": "omni"}
+    if desc.startswith("⚠️"):
+        return {"kind": "unknown"}
+    return {"kind": "text"}
+
+
+MAX_CONFIG_BYTES = 64 * 1024
+
+
+def read_config(alias: str) -> str:
+    return (CONFIG_DIR / f"{alias}.yaml").read_text(encoding="utf-8")
+
+
+def validate_config(text: str) -> str | None:
+    """저장 전 최소 확인. 문제가 있으면 이유(코드)를 돌려준다."""
+    if len(text.encode("utf-8")) > MAX_CONFIG_BYTES:
+        return "too_large"
+    if "\x00" in text:
+        return "invalid"
+    if not re.search(r"^model:\s*\S+", text, re.M):
+        return "no_model"
+    for line in text.splitlines():
+        if (
+            line.strip()
+            and not line.startswith("#")
+            and not re.match(r"^[A-Za-z0-9_-]+:\s?.*$", line)
+        ):
+            return "invalid"
+    return None
+
+
+def write_config(alias: str, text: str) -> None:
+    path = CONFIG_DIR / f"{alias}.yaml"
+    backup = path.with_suffix(".yaml.bak")
+    if path.exists():
+        backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+    tmp = path.with_suffix(".yaml.tmp")
+    tmp.write_text(text if text.endswith("\n") else text + "\n", encoding="utf-8")
+    tmp.replace(path)
 
 
 def list_models(total_mib: int) -> list[dict]:
@@ -126,7 +189,12 @@ def list_models(total_mib: int) -> list[dict]:
         try:
             p = plan(path, gpus, total_mib)
         except Exception as e:  # noqa: BLE001 - 한 모델 계산 실패가 목록 전체를 막지 않도록
-            p = {"need_mib": 0, "desc": f"계산 실패: {e}", "ctx": None}
+            p = {
+                "need_mib": 0,
+                "desc": f"계산 실패: {e}",
+                "ctx": None,
+                "breakdown": {"kind": "unknown"},
+            }
         d = files_dir(y.get("model", ""))
         out.append(
             {

@@ -1,13 +1,16 @@
 [project]
-name = "vllm-control-server"
-version = "0.1.0"
-description = "Web control panel for the local vLLM server"
+name = "vllm-manager-console"
+version = "1.0.0"
+description = "Web console for vLLM Manager"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi",
     "uvicorn[standard]",
     "jinja2",
     "python-dotenv",
+    "httpx",
+    "huggingface_hub",
+    "webauthn>=2.5",
     "pyjwt",
 ]
 

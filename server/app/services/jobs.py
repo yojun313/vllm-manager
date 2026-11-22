@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shlex
+import signal
 import subprocess
 import threading
 import time
@@ -19,10 +20,11 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from app.config import SERVICE_DIR, VLLM_BIN, VLLM_ROOT
+from app import config
+from app.config import VLLM_ROOT
 from app.services import docker
 
-DATA_DIR = SERVICE_DIR / "data" / "jobs"
+DATA_DIR = config.DATA_DIR / "jobs"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 KEEP = 40
 MAX_LINES = 5000
@@ -163,7 +165,22 @@ class Job:
             "ended": self.meta.get("ended"),
             "last": last[-240:],
             "progress": self.meta.get("progress"),
+            "gpus": self.meta.get("gpus", ""),
+            "files": bool(self.meta.get("files")),
+            "canceled": bool(self.meta.get("canceled")),
         }
+
+    def cancel(self) -> bool:
+        """작업 프로세스 묶음에 종료 신호를 보낸다 (다운로드 취소). 받은 파일은 남아 이어받을 수 있다."""
+        if self.status != "running" or not self._alive():
+            return False
+        self.meta["canceled"] = True
+        self._save()
+        try:
+            os.killpg(os.getpgid(self.meta["pid"]), signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            return False
+        return True
 
 
 # ---------------------------------------------------------------- 목록 (파일에서 복원)
@@ -208,7 +225,7 @@ def _spawn(job_id: int, args: list[str]) -> tuple[int, int]:
     """이중 fork 로 서버와 분리해 실행하고 (pid, 시작시각) 을 돌려준다."""
     log = DATA_DIR / f"{job_id}.log"
     pidfile = DATA_DIR / f"{job_id}.pid"
-    cmd = " ".join(shlex.quote(a) for a in [str(VLLM_BIN), *args])
+    cmd = " ".join(shlex.quote(a) for a in [str(config.VLLM_BIN), *args])
     script = (
         f'( {cmd} </dev/null; echo "{EXIT_MARK} $?" ) >> {shlex.quote(str(log))} 2>&1 & '
         f"echo $! > {shlex.quote(str(pidfile))}"

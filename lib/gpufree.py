@@ -31,7 +31,8 @@ def smi(query, kind="gpu"):
 
 def gpu_usage(containers, skip="-", safety=0):
     """containers: [(이름, "0,1", 예약MiB 또는 None, 짧은ID)]
-    반환: [{idx, name, total, used, other, ours: {이름: MiB}, free_new}]  (단위 MiB)"""
+    반환: [{idx, name, total, used, other, ours: {이름: MiB}, procs, free_new}]  (단위 MiB)
+    procs: 우리 컨테이너가 아닌 GPU 프로세스 [{pid, mib, exe, container(64자리 ID 또는 "")}]"""
     gpus = {
         g[1]: {"idx": g[0], "name": g[4], "total": int(g[2]), "used": int(g[3])}
         for g in smi("index,uuid,memory.total,memory.used,name")
@@ -44,14 +45,28 @@ def gpu_usage(containers, skip="-", safety=0):
 
     # GPU 프로세스 → 컨테이너 (cgroup 경로의 64자리 컨테이너 ID)
     actual = {}  # (container id, gpu idx) → MiB
-    for pid, used, uuid in smi("pid,used_memory,gpu_uuid", "compute-apps"):
+    procs = {}  # gpu idx → 다른 프로세스 목록
+    for row in smi("pid,used_memory,gpu_uuid,process_name", "compute-apps"):
+        if len(row) < 4 or row[2] not in gpus or not row[1].isdigit():
+            continue
+        pid, used, uuid, exe = row[0], int(row[1]), row[2], ",".join(row[3:])
         try:
             m = re.search(r"[0-9a-f]{64}", open(f"/proc/{pid}/cgroup").read())
         except OSError:
             m = None
-        if m and m.group(0)[:12] in ours and uuid in gpus:
-            key = (m.group(0)[:12], gpus[uuid]["idx"])
-            actual[key] = actual.get(key, 0) + int(used)
+        idx = gpus[uuid]["idx"]
+        if m and m.group(0)[:12] in ours:
+            key = (m.group(0)[:12], idx)
+            actual[key] = actual.get(key, 0) + used
+        else:
+            procs.setdefault(idx, []).append(
+                {
+                    "pid": pid,
+                    "mib": used,
+                    "exe": exe,
+                    "container": m.group(0) if m else "",
+                }
+            )
 
     result = []
     for g in sorted(gpus.values(), key=lambda g: int(g["idx"])):
@@ -69,6 +84,7 @@ def gpu_usage(containers, skip="-", safety=0):
                 **g,
                 "other": other,
                 "ours": mine,
+                "procs": sorted(procs.get(g["idx"], []), key=lambda p: -p["mib"]),
                 "free_new": g["total"] - other - sum(mine.values()) - safety,
             }
         )

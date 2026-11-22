@@ -1,23 +1,34 @@
 {% extends "base.html" %}
-{% block title %}로그인 · vLLM Control{% endblock %}
+{% block title %}vLLM Manager{% endblock %}
 {% block body_class %}login{% endblock %}
 {% block body %}
 <main class="login-wrap">
   <div class="login-card">
-    <div class="mark lg">
-      <img class="app-icon" src="/icons/server.svg" alt="" width="40" height="40">
+    <div class="login-head">
+      <img class="login-icon" src="/icons/server.svg" alt="" width="56" height="56">
+      <h1>vLLM Manager</h1>
+      <p data-i18n="login.sub"></p>
     </div>
-    <h1>vLLM Control</h1>
-    <p>GPU 서버의 모델을 켜고 끄는 관리 화면입니다.</p>
+    {% if demo %}<div class="notice info" data-i18n="login.demo"></div>{% endif %}
     <form id="loginForm" autocomplete="on">
-      <label class="field"><span>아이디</span>
+      <label class="field"><span data-i18n="login.username"></span>
         <input class="input" id="username" name="username" autocomplete="username" autocapitalize="off" spellcheck="false" required autofocus></label>
-      <label class="field"><span>비밀번호</span>
-        <input class="input" id="password" name="password" type="password" autocomplete="current-password" required></label>
-      <button class="btn primary block" type="submit" id="loginBtn">로그인</button>
+      <label class="field"><span data-i18n="login.password"></span>
+        <span class="input-wrap"><input class="input" id="password" name="password" type="password" autocomplete="current-password" required>
+          <button class="input-btn" type="button" data-reveal="password" tabindex="-1"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg></button></span></label>
+      <div class="caps" id="capsNote" data-i18n="login.caps" hidden></div>
+      <button class="btn primary block" type="submit" id="loginBtn" data-i18n="login.submit"></button>
       <div class="form-err" id="loginErr" role="alert"></div>
     </form>
+    {% if passkey %}<div class="passkey-box" id="passkeyBox">
+      <div class="or" data-i18n="login.or"></div>
+      <button class="btn block" type="button" id="passkeyLogin"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9"/><path d="m17 6 3 3"/><path d="m14 9 2 2"/></svg><span data-i18n="pk.signIn"></span></button>
+    </div>{% endif %}
+  </div>
+  <div class="login-foot">
+    <button class="link" type="button" id="langToggle"></button>
+    <span>vLLM Manager v{{ version }}</span>
   </div>
 </main>
 {% endblock %}
-{% block scripts %}<script src="/js/login.js"></script>{% endblock %}
+{% block scripts %}<script type="module" src="/js/login.js?v={{ version }}"></script>{% endblock %}

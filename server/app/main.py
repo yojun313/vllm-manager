@@ -1,16 +1,39 @@
 # app/main.py
 import os
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.types import Receive, Scope, Send
 
+from app import config
+
+if config.DEMO:  # 서비스 모듈을 가져오기 전에 가상 데이터로 바꿔 끼운다
+    from app import demo
+
+    demo.install()
+
 from app.auth import AuthMiddleware
 from app.routes import api_router
+from app.services import history, prepare
 
-app = FastAPI(title="vLLM Control", docs_url=None, redoc_url=None, openapi_url=None)
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    history.start()
+    prepare.start()
+    yield
+
+
+app = FastAPI(
+    title="vLLM Manager",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+    lifespan=lifespan,
+)
 app.add_middleware(AuthMiddleware)
 logger = logging.getLogger("uvicorn.error")
 
@@ -32,9 +55,9 @@ async def security_headers(request: Request, call_next):
     )
     response.headers.setdefault(
         "Content-Security-Policy",
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-        "font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data:; connect-src 'self' ws: wss:; "
-        "frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "font-src 'self' data:; img-src 'self' data:; connect-src 'self' ws: wss:; "
+        "manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
     )
     response.headers.setdefault("Cache-Control", "no-store")
     if request.url.scheme == "https":
