@@ -14,7 +14,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 # 루트 .env 가 없어도 되는 명령 (설치·설정·관리 서버 제어)
 case "${1:-}" in
-    configure|doctor|server|update|version|demo|hf-login|-h|--help|help) NEEDS_ENV=0 ;;
+    configure|doctor|server|update|version|hf-login|-h|--help|help) NEEDS_ENV=0 ;;
     *) NEEDS_ENV=1 ;;
 esac
 if [[ ! -f "$ROOT/.env" ]] && (( NEEDS_ENV )); then
@@ -851,7 +851,6 @@ usage() {
   update                       최신 버전으로 업데이트하고 관리 서버를 재시작
   doctor                       설치 상태 점검 (빠진 것과 해결 방법 안내)
   hf-login                     Hugging Face 로그인 (승인이 필요한 모델용)
-  demo                         GPU 없이 가상 데이터로 관리 화면 체험
 
   -n, --dry-run                실제로 실행하지 않고 docker 명령만 출력
 
@@ -892,7 +891,6 @@ case "$cmd" in
     update|upgrade)   cmd_update ;;
     doctor|check)     cmd_doctor ;;
     hf-login)         cmd_hf_login ;;
-    demo)             need_uv; exec uv run --quiet --project "$SERVER_DIR" --python 3.12 python "$ROOT/tools/demo.py" "$@" ;;
     version)          cat "$ROOT/VERSION" ;;
     -h|--help|help)   usage ;;
     *)                die "알 수 없는 명령: $cmd (./vllm help)" ;;

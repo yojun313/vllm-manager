@@ -79,7 +79,6 @@ function renderShell() {
   const running = S.jobs.filter((j) => j.status === 'running').length;
   $$('#jobsBadge, [data-jobs]').forEach((b) => { b.hidden = !running; b.textContent = running; });
   const banners = [];
-  if (S.demo) banners.push(`<div class="notice info"><span>${icon('info')}</span><div class="grow"><b>${esc(t('banner.demo'))}</b> ${esc(t('banner.demoBody'))}</div></div>`);
   if (!S.docker_ok) banners.push(`<div class="notice bad"><span>${icon('alert')}</span><div class="grow"><b>${esc(t('banner.docker'))}</b> ${t('banner.dockerBody')}<div class="mono small" style="opacity:.75;margin-top:4px">${esc(S.docker_error)}</div></div></div>`);
   if (S.prepare?.state === 'running') banners.push(`<div class="notice info"><span>${icon('box')}</span><div class="grow"><b>${esc(t('banner.prepare'))}</b> ${esc(t('banner.prepareBody'))}<div class="mono small" style="opacity:.75;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(S.prepare.last)}</div></div></div>`);
   if (S.prepare?.state === 'failed' && S.docker_ok) banners.push(`<div class="notice warn"><span>${icon('alert')}</span><div class="grow"><b>${esc(t('banner.prepareFail'))}</b><div class="mono small" style="opacity:.8;margin-top:4px;overflow-wrap:anywhere">${esc(S.prepare.error)}</div></div><button class="btn sm" id="prepareRetry">${esc(t('banner.retry'))}</button></div>`);

@@ -52,7 +52,7 @@ def _run():
 
 def start() -> bool:
     with _lock:
-        if config.DEMO or status["state"] == "running":
+        if status["state"] == "running":
             return False
         status.update(state="running", last="", error="")
         print("[시작] vLLM 실행 환경 자동 준비를 시작합니다.", flush=True)

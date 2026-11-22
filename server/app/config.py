@@ -10,16 +10,11 @@ from dotenv import load_dotenv
 
 SERVICE_DIR = Path(__file__).resolve().parent.parent  # server/
 REPO_ROOT = SERVICE_DIR.parent  # 저장소 루트
-# 데모 모드는 가상 모델·가짜 실행기가 든 별도 폴더를 루트로 쓴다
-VLLM_ROOT = Path(os.getenv("VLLM_ROOT_DIR", "") or REPO_ROOT)
+VLLM_ROOT = REPO_ROOT
 SERVER_ENV_FILE = SERVICE_DIR / ".env"
 ROOT_ENV_FILE = VLLM_ROOT / ".env"
 
-# 데모 모드: GPU·Docker 없이 가상 데이터로 화면만 띄운다 (tools/demo.py)
-DEMO = os.getenv("VLLM_DEMO", "") == "1"
-
-if not DEMO:
-    load_dotenv(SERVER_ENV_FILE)
+load_dotenv(SERVER_ENV_FILE)
 
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "").strip()
 # 비밀번호는 해시(ADMIN_PASS_HASH, ./vllm configure 가 기록)를 우선하고, 예전 방식의 평문(ADMIN_PASSWORD)도 받는다
@@ -53,7 +48,7 @@ VLLM_BIN = VLLM_ROOT / "vllm"
 CONFIG_DIR = VLLM_ROOT / "models"
 LIB_DIR = REPO_ROOT / "lib"
 API_KEY_FILE = VLLM_ROOT / "api-key.env"
-DATA_DIR = Path(os.getenv("VLLM_DATA_DIR", "") or SERVICE_DIR / "data")
+DATA_DIR = SERVICE_DIR / "data"
 
 
 def read_env_file(path: Path) -> dict:
@@ -100,7 +95,7 @@ _DEFAULT_ENV = {
     "SAFETY_MIB": "2048",
 }
 
-if not ROOT_ENV_FILE.exists() and not DEMO:
+if not ROOT_ENV_FILE.exists():
     # 첫 실행: 감지한 GPU·경로로 기본 설정을 만든다 (이후 웹의 설정 화면이나 `./vllm configure` 로 변경)
     subprocess.run(
         [sys.executable, str(REPO_ROOT / "tools" / "setup.py"), "--ensure"], check=False

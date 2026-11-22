@@ -80,10 +80,9 @@ def _fingerprint() -> str:
 def set_password(password: str) -> None:
     """새 비밀번호를 해시로 server/.env 에 기록하고 즉시 적용한다 (평문 항목은 삭제)."""
     hashed = hash_password(password)
-    if not config.DEMO:
-        config.write_env_values(
-            config.SERVER_ENV_FILE, {"ADMIN_PASS_HASH": hashed, "ADMIN_PASSWORD": None}
-        )
+    config.write_env_values(
+        config.SERVER_ENV_FILE, {"ADMIN_PASS_HASH": hashed, "ADMIN_PASSWORD": None}
+    )
     _cred.update(hash=hashed, plain="")
 
 

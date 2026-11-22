@@ -109,7 +109,7 @@ _SERVER_DEFAULTS = {
 
 
 def _server_env() -> dict:
-    if config.DEMO or not config.SERVER_ENV_FILE.exists():
+    if not config.SERVER_ENV_FILE.exists():
         return {}
     return config.read_env_file(config.SERVER_ENV_FILE)
 
@@ -183,12 +183,6 @@ def update(values: dict, public_urls: dict | None = None) -> dict:
                 urls[str(port)] = url
         if urls != config.MODEL_PUBLIC_URLS:
             changed.append("MODEL_PUBLIC_URLS")
-    if config.DEMO:
-        config.VLLM_ENV.update(root)
-        if urls is not None:
-            config.MODEL_PUBLIC_URLS.clear()
-            config.MODEL_PUBLIC_URLS.update(urls)
-        return {"changed": changed, "restart": False}
     for key in ("MODELS_DIR", "HF_CACHE_DIR", "VLLM_CACHE_DIR"):
         if key in root:
             try:

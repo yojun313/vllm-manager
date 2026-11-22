@@ -17,7 +17,6 @@ def _context(request: Request) -> dict:
     return {
         "lang": lang_of(request),
         "version": config.APP_VERSION,
-        "demo": config.DEMO,
     }
 
 

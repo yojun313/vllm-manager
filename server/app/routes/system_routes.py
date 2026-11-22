@@ -69,13 +69,6 @@ async def put_settings(body: SettingsBody, request: Request):
 @router.post("/system/restart")
 async def restart(request: Request):
     """관리 서버만 다시 시작한다. 실행 중인 모델과 진행 중인 작업은 서버와 분리되어 있어 영향을 받지 않는다."""
-    if config.DEMO:
-        raise fail(
-            request,
-            400,
-            "데모 모드에서는 재시작하지 않습니다",
-            "Restart is disabled in demo mode",
-        )
 
     def later():
         time.sleep(0.6)

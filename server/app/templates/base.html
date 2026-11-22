@@ -12,7 +12,7 @@
   <script src="/js/boot.js?v={{ version }}"></script>
   <link rel="stylesheet" href="/css/app.css?v={{ version }}">
 </head>
-<body class="{% block body_class %}{% endblock %}" data-version="{{ version }}"{% if demo %} data-demo="1"{% endif %}>
+<body class="{% block body_class %}{% endblock %}" data-version="{{ version }}">
 {% block body %}{% endblock %}
 {% block scripts %}{% endblock %}
 </body>

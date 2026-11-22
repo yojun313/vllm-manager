@@ -100,7 +100,7 @@ def healthy(port: str) -> bool:
 
 
 def logs_cmd(name: str, tail: int = 400) -> list[str]:
-    """실시간 로그 스트림에 쓰는 명령 (데모 모드에서 바꿔 끼운다)."""
+    """실시간 로그 스트림에 쓰는 명령."""
     return ["docker", "logs", "-f", "--tail", str(tail), name]
 
 

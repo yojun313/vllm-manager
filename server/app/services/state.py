@@ -90,7 +90,6 @@ async def _build() -> dict:
     return {
         "image": VLLM_ENV.get("VLLM_AUDIO_IMAGE") or VLLM_ENV.get("VLLM_IMAGE", ""),
         "version": config.APP_VERSION,
-        "demo": config.DEMO,
         "prepare": dict(prepare.status),
         "user": config.ADMIN_USERNAME,
         "models_dir": VLLM_ENV.get("MODELS_DIR", ""),

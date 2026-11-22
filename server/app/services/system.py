@@ -165,7 +165,6 @@ def info(max_age: float = 10) -> dict:
             "version": config.APP_VERSION,
             "commit": config.APP_COMMIT,
             "root": str(config.REPO_ROOT),
-            "demo": config.DEMO,
         },
         "host": {
             "name": socket.gethostname(),

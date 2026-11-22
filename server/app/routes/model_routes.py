@@ -340,14 +340,9 @@ async def chat(body: ChatBody, request: Request):
     key = _read_key()
     headers = {"Authorization": f"Bearer {key}"} if key else {}
     return StreamingResponse(
-        chat_stream(
-            f"http://127.0.0.1:{c['port']}/v1/chat/completions", payload, headers, c
+        _chat_stream(
+            f"http://127.0.0.1:{c['port']}/v1/chat/completions", payload, headers
         ),
         media_type="text/event-stream",
         headers={"X-Accel-Buffering": "no"},
     )
-
-
-def chat_stream(url: str, payload: dict, headers: dict, container: dict):
-    """데모 모드에서 바꿔 끼우는 지점."""
-    return _chat_stream(url, payload, headers)

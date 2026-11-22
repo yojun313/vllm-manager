@@ -10,11 +10,6 @@ from starlette.types import Receive, Scope, Send
 
 from app import config
 
-if config.DEMO:  # 서비스 모듈을 가져오기 전에 가상 데이터로 바꿔 끼운다
-    from app import demo
-
-    demo.install()
-
 from app.auth import AuthMiddleware
 from app.routes import api_router
 from app.services import history, prepare

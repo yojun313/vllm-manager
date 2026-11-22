@@ -22,7 +22,7 @@ _started = False
 
 
 def collect() -> dict:
-    """현재 값을 한 점으로 만든다 (데모 모드에서 바꿔 끼운다)."""
+    """현재 값을 한 점으로 만든다."""
     gpus = {
         g["idx"]: {
             "util": g["util"],

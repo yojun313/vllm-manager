@@ -64,16 +64,6 @@ If you skip `configure`, the console starts in first-run mode and prints a one-t
 </details>
 
 <details>
-<summary>Try it without a GPU (demo mode)</summary>
-
-```bash
-./vllm demo        # http://127.0.0.1:7998 · demo / vllm-manager-demo
-```
-
-The demo runs on four simulated GPUs with sample models in a temporary folder. Starting, stopping, downloading, logs and the playground all work, and nothing touches Docker or your real models. The screenshots on this page come from it (`tools/demo/capture.py`).
-</details>
-
-<details>
 <summary>Running under PM2</summary>
 
 `ecosystem.config.js` runs the same launcher under [PM2](https://pm2.keymetrics.io/): `pm2 start ecosystem.config.js`. The PM2 daemon must have Docker access, for example `sg docker -c "pm2 start ecosystem.config.js"` right after adding yourself to the `docker` group.
@@ -163,7 +153,6 @@ The demo runs on four simulated GPUs with sample models in a temporary folder. S
 | `update` | Pull the latest version, refresh dependencies and restart the console. |
 | `doctor` | Check the install and explain how to fix what is missing. |
 | `hf-login` | Sign in to Hugging Face (needed for gated models). |
-| `demo` | Run the console on simulated GPUs. |
 
 **Global option**
 
@@ -457,7 +446,6 @@ After changing the version, check that the log lines used by the start-up progre
 vllm                  CLI: model lifecycle, console control, doctor, update
 install.sh            one-line installer
 tools/setup.py        setup questions (writes .env and server/.env)
-tools/demo.py         demo mode
 lib/                  memory planning, config generation, GPU accounting
 docker/               Dockerfiles for the audio and Omni images
 deploy/               Omni stage deployment profiles and config examples
